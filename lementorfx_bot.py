@@ -1,258 +1,345 @@
 import logging, json, os, re
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, ConversationHandler, filters
 )
 
-TOKEN        = "7575039426:AAHnnxr8L7OVdy5TuSsA45rt1l1ID5ubFYc"
-ADMIN_ID     = 7412212489
-CANAL_PRIVE  = "https://t.me/+HJ9qJhRZ7mg0MmFk"
-CANAL_PUBLIC = "https://t.me/lementorforexgroup"
-EXNESS_LINK  = "https://one.exnessonelink.com/a/do7n4lz3on"
-DB_FILE      = "membres.json"
+TOKEN       = "7575039426:AAHnnxr8L7OVdy5TuSsA45rt1l1ID5ubFYc"
+ADMIN_ID    = 7412212489
+CANAL_PRIVE = "https://t.me/+HJ9qJhRZ7mg0MmFk"
+EXNESS_LINK = "https://one.exnessonelink.com/a/do7n4lz3on"
+DB_FILE     = "membres.json"
 
 S_LANG, S_NOM, S_PAYS, S_EMAIL, S_EXQ, S_EXID, S_CONFIRM = range(7)
 
-# ── BASE DE DONNÉES ──────────────────────────────────────
+logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
+log = logging.getLogger(__name__)
+
+# ═══════════════════════════════════════════════════════
+# BASE DE DONNÉES
+# ═══════════════════════════════════════════════════════
 
 def load_db():
     if os.path.exists(DB_FILE):
         with open(DB_FILE,"r",encoding="utf-8") as f: return json.load(f)
-    return {"membres":{},"en_attente":{},"exness_ids":[],"emails":[],"bloques":[]}
+    return {"valides":{},"attente":{},"rejetes":{},"exness_ids":[],"emails":[],"bloques":[]}
 
 def save_db(db):
     with open(DB_FILE,"w",encoding="utf-8") as f: json.dump(db,f,ensure_ascii=False,indent=2)
 
-def eid_exist(e):  return e in load_db().get("exness_ids",[])
-def mail_exist(e): return e.lower() in [x.lower() for x in load_db().get("emails",[])]
-def bloque(uid):   return uid in load_db().get("bloques",[])
+def eid_used(e):   return e in load_db().get("exness_ids",[])
+def mail_used(e):  return e.lower() in [x.lower() for x in load_db().get("emails",[])]
+def is_blocked(u): return u in load_db().get("bloques",[])
+def is_validated(u): return str(u) in load_db().get("valides",{})
 
-def mettre_en_attente(uid, d):
-    """Sauvegarde le membre en attente de validation manuelle"""
+def save_pending(uid, d):
     db = load_db()
-    db["en_attente"][str(uid)] = {**d, "date": datetime.now().isoformat(), "statut": "en_attente"}
+    db["attente"][str(uid)] = {**d, "date": datetime.now().isoformat()}
     save_db(db)
 
-def valider_membre(uid):
-    """Valide un membre après vérification Exness"""
+def approve(uid):
     db = load_db()
-    uid = str(uid)
-    if uid not in db["en_attente"]:
-        return None
-    d = db["en_attente"].pop(uid)
+    k = str(uid)
+    if k not in db["attente"]: return None
+    d = db["attente"].pop(k)
     d["statut"] = "validé"
-    db["membres"][uid] = d
-    if d.get("exness_id"): db["exness_ids"].append(d["exness_id"])
-    if d.get("email"):     db["emails"].append(d["email"].lower())
+    db["valides"][k] = d
+    db["exness_ids"].append(d["exness_id"])
+    db["emails"].append(d["email"].lower())
     save_db(db)
     return d
 
-def rejeter_membre(uid):
-    """Rejette un membre"""
+def reject(uid):
     db = load_db()
-    uid = str(uid)
-    d = db["en_attente"].pop(uid, None)
-    if d:
-        d["statut"] = "rejeté"
-        db["membres"][uid] = d
-        save_db(db)
+    k = str(uid)
+    if k not in db["attente"]: return None
+    d = db["attente"].pop(k)
+    d["statut"] = "rejeté"
+    db["rejetes"][k] = d
+    save_db(db)
     return d
 
-# ── TEXTES ───────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════
+# TEXTES — FR et EN
+# ═══════════════════════════════════════════════════════
 
-FR = {
-"lang":   "🌍 *Choisis ta langue / Choose your language:*",
-"bienve": "🤖 *Bienvenue chez LeMentorFx !*\n\nBot officiel de *@lementorfx* — Partenaire IB Exness.\n\n✅ Signaux XAU/USD gratuits\n✅ Éducation SMC/ICT\n✅ Robot EA gratuit *(filleuls Exness)*\n\n2 minutes pour t'inscrire 👇",
-"nom":    "👤 *Étape 1/5*\n\nTon *nom complet* ?",
-"pays":   "🌍 *Étape 2/5*\n\nTon pays ?",
-"email":  "📧 *Étape 3/5*\n\nAdresse email utilisée sur Exness ?\n\n⚠️ Servira à vérifier ton parrainage.",
-"ebad":   "❌ Email invalide. Réessaie :",
-"edup":   "❌ Email déjà enregistré. Contacte @lementorfx.",
-"exq":    "🏦 *Étape 4/5*\n\nAs-tu un compte Exness ?",
-"noex":   f"⚠️ Ouvre ton compte Exness gratuitement :\n{EXNESS_LINK}\n\nReviens taper /start une fois inscrit ✅",
-"exid":   "🔢 *Étape 5/5*\n\nTon *ID Exness* (7 à 9 chiffres) ?\n\n📌 exness.com → Profil → tableau de bord",
-"idbad":  "❌ ID invalide (7-9 chiffres). Réessaie :",
-"iddup":  "❌ ID déjà enregistré. Contacte @lementorfx.",
-"recap":  "✅ *Vérification*\n\n👤 {nom}\n🌍 {pays}\n📧 {email}\n🏦 ID: {exid}\n📱 @{user}\n\nTout est correct ?",
+T = {
+"fr": {
 
-# ⚠️ NOUVEAU : message d'attente au lieu du lien direct
-"attente": (
-    "⏳ *Demande envoyée !*\n\n"
-    "Tes informations ont été transmises à *@lementorfx* pour vérification.\n\n"
-    "📋 *Ce qui se passe maintenant :*\n"
-    "1. @lementorfx vérifie ton ID Exness sur son espace partenaire\n"
-    "2. Si tu es bien inscrit via le lien de parrainage ✅\n"
-    "3. Tu reçois le lien du canal privé directement ici\n\n"
-    "⏱ Délai : *quelques heures maximum*\n\n"
-    "❓ Des questions ? → @lementorfx"
+"accueil": (
+    "👋 *Bonjour et bienvenue !*\n\n"
+    "Je suis l'assistant officiel de *LeMentorFx* 🤖\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📡 *Signaux XAU/USD gratuits*\n"
+    "🎓 *Éducation trading SMC/ICT*\n"
+    "🤝 *Accompagnement personnalisé*\n"
+    "🤖 *Robot EA offert* _(filleuls Exness)_\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Pour accéder au canal privé, il te faut :\n"
+    "✅ Un compte Exness via le lien de @lementorfx\n\n"
+    "⏱ L'inscription prend *2 minutes*.\n\n"
+    "👇 *Appuie sur le bouton pour commencer*"
 ),
 
-# Message envoyé si rejeté
+"nom":   (
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "👤 *ÉTAPE 1 sur 5 — Identité*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Quel est ton *nom complet* ?\n\n"
+    "_Ex : Jean-Pierre Mvogo_"
+),
+"pays":  (
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "🌍 *ÉTAPE 2 sur 5 — Pays*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Dans quel *pays* es-tu situé ?\n\n"
+    "_Ex : Cameroun, Sénégal, France..._"
+),
+"email": (
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📧 *ÉTAPE 3 sur 5 — Email Exness*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Entre l'adresse email utilisée pour ton compte Exness.\n\n"
+    "⚠️ *Important :* cet email sera croisé avec la liste "
+    "des filleuls de @lementorfx pour vérification.\n\n"
+    "_Ex : tonnom@gmail.com_"
+),
+"ebad":  "❌ *Email invalide.* Entre une adresse correcte :\n_Ex : tonnom@gmail.com_",
+"edup":  "❌ *Cet email est déjà enregistré.*\nSi c'est une erreur, contacte @lementorfx directement.",
+"exq":   (
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "🏦 *ÉTAPE 4 sur 5 — Compte Exness*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "As-tu déjà un compte Exness ?\n\n"
+    "💡 Le canal est *100% gratuit*. La seule condition "
+    "est de t'être inscrit via le lien de @lementorfx."
+),
+"noex":  (
+    "⚠️ *Pas encore de compte Exness ?*\n\n"
+    "Pas de problème ! C'est *gratuit* et ça prend 3 minutes.\n\n"
+    f"🔗 *Lien officiel :*\n{EXNESS_LINK}\n\n"
+    "✅ Une fois inscrit, reviens ici et tape /start\n"
+    "Je t'accompagnerai pour finaliser ton accès."
+),
+"exid":  (
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "🔢 *ÉTAPE 5 sur 5 — ID Exness*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Entre ton *ID de compte Exness*.\n\n"
+    "📌 *Comment le trouver :*\n"
+    "1️⃣ Va sur exness.com et connecte-toi\n"
+    "2️⃣ Clique sur ton profil *(haut à droite)*\n"
+    "3️⃣ L'ID s'affiche sur le tableau de bord\n"
+    "_(C'est un numéro de 7 à 9 chiffres)_\n\n"
+    "👇 Entre ton ID maintenant :"
+),
+"idbad": "❌ *ID invalide.* L'ID Exness contient 7 à 9 chiffres uniquement.\nEssaie encore :",
+"iddup": "❌ *Cet ID est déjà utilisé.*\nChaque ID ne peut servir qu'une seule fois.\nContacte @lementorfx si c'est une erreur.",
+"recap": (
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📋 *RÉCAPITULATIF*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "👤 Nom : *{nom}*\n"
+    "🌍 Pays : *{pays}*\n"
+    "📧 Email : *{email}*\n"
+    "🏦 ID Exness : *{exid}*\n"
+    "📱 Telegram : @{user}\n\n"
+    "✅ Tout est correct ?"
+),
+"attente": (
+    "⏳ *Demande envoyée avec succès !*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Tes informations ont été transmises à *@lementorfx*.\n\n"
+    "📋 *Ce qui se passe maintenant :*\n\n"
+    "1️⃣ @lementorfx vérifie ton ID Exness\n"
+    "   sur son tableau de bord partenaire\n\n"
+    "2️⃣ Si tu es bien son filleul ✅\n"
+    "   → Tu reçois le lien du canal ici\n\n"
+    "3️⃣ Si non ❌\n"
+    "   → Tu reçois un message explicatif\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "⏱ *Délai : quelques heures maximum*\n\n"
+    "Des questions ? → @lementorfx 💬"
+),
+"valide": (
+    "🎉 *ACCÈS ACCORDÉ !*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Ton parrainage Exness a été *vérifié et validé* ✅\n\n"
+    "Bienvenue dans la communauté *LeMentorFx* ! 🔥\n\n"
+    "🔐 *Ton lien d'accès au canal privé :*\n\n"
+    "👇👇👇\n"
+    "{canal}\n"
+    "👆👆👆\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📌 *Étapes suivantes :*\n"
+    "1. Rejoins le canal via le lien ci-dessus\n"
+    "2. Active les notifications 🔔\n"
+    "3. Lis les règles épinglées\n"
+    "4. Attends le prochain signal 📡\n\n"
+    "Bon trading ! 🚀 @lementorfx"
+),
 "rejete": (
     "❌ *Inscription non validée*\n\n"
-    "Ton ID Exness *{exid}* n'a pas pu être vérifié comme filleul de @lementorfx.\n\n"
-    "💡 *Que faire ?*\n"
-    "→ Si tu n'as pas de compte Exness, crée-en un ici :\n"
-    f"{EXNESS_LINK}\n\n"
-    "→ Si tu en as déjà un, contacte @lementorfx pour régulariser.\n\n"
-    "Une fois fait, retape /start."
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "L'ID Exness *{exid}* n'a pas pu être vérifié "
+    "comme filleul de @lementorfx.\n\n"
+    "💡 *Solutions :*\n\n"
+    "▸ Tu n'as pas encore de compte Exness ?\n"
+    f"  → Crée-en un via ce lien : {EXNESS_LINK}\n\n"
+    "▸ Tu as déjà un compte mais pas via le lien ?\n"
+    "  → Contacte @lementorfx pour régulariser\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Une fois réglé, tape /start pour recommencer."
 ),
+"cancel": "❌ Inscription annulée.\nTape /start quand tu veux recommencer.",
+"deja":   "✅ Tu es déjà inscrit et validé !\nTu as accès au canal. Des questions ? → @lementorfx",
+},
 
-# Message envoyé si validé (avec lien)
-"valide": (
-    "🎉 *Accès accordé !*\n\n"
-    "Ton parrainage Exness a été vérifié ✅\n\n"
-    "🔐 *Ton lien d'accès au canal privé :*\n"
-    "👇👇👇\n{canal}\n👆👆👆\n\n"
-    "Active les notifications 🔔\n"
-    "Lis les règles épinglées 📌\n\n"
-    "Questions → @lementorfx"
+"en": {
+"accueil": (
+    "👋 *Hello and welcome!*\n\n"
+    "I'm the official assistant of *LeMentorFx* 🤖\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📡 *Free XAU/USD signals*\n"
+    "🎓 *SMC/ICT trading education*\n"
+    "🤝 *Personal coaching*\n"
+    "🤖 *Free EA Robot* _(Exness referrals)_\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "To access the private channel, you need:\n"
+    "✅ An Exness account via @lementorfx's link\n\n"
+    "⏱ Registration takes *2 minutes*.\n\n"
+    "👇 *Press the button to start*"
 ),
-
-"cancel": "❌ Annulé. /start pour recommencer.",
-}
-
-EN = {
-"lang":   "🌍 *Choisis ta langue / Choose your language:*",
-"bienve": "🤖 *Welcome to LeMentorFx!*\n\nOfficial bot of *@lementorfx* — Exness IB Partner.\n\n✅ Free XAU/USD signals\n✅ SMC/ICT education\n✅ Free EA Robot *(Exness referrals)*\n\n2 minutes to register 👇",
-"nom":    "👤 *Step 1/5*\n\nYour *full name*?",
-"pays":   "🌍 *Step 2/5*\n\nYour country?",
-"email":  "📧 *Step 3/5*\n\nEmail used on Exness?\n\n⚠️ Used to verify your referral.",
-"ebad":   "❌ Invalid email. Try again:",
-"edup":   "❌ Email already registered. Contact @lementorfx.",
-"exq":    "🏦 *Step 4/5*\n\nDo you have an Exness account?",
-"noex":   f"⚠️ Open your Exness account for free:\n{EXNESS_LINK}\n\nCome back and type /start once registered ✅",
-"exid":   "🔢 *Step 5/5*\n\nYour *Exness ID* (7 to 9 digits)?\n\n📌 exness.com → Profile → dashboard",
-"idbad":  "❌ Invalid ID (7-9 digits). Try again:",
-"iddup":  "❌ ID already registered. Contact @lementorfx.",
-"recap":  "✅ *Review*\n\n👤 {nom}\n🌍 {pays}\n📧 {email}\n🏦 ID: {exid}\n📱 @{user}\n\nIs everything correct?",
-
-"attente": (
-    "⏳ *Request submitted!*\n\n"
-    "Your information has been sent to *@lementorfx* for verification.\n\n"
-    "📋 *What happens next:*\n"
-    "1. @lementorfx verifies your Exness ID in his partner dashboard\n"
-    "2. If you registered via the referral link ✅\n"
-    "3. You receive the private channel link directly here\n\n"
-    "⏱ Delay: *a few hours maximum*\n\n"
-    "❓ Questions? → @lementorfx"
-),
-
-"rejete": (
-    "❌ *Registration not approved*\n\n"
-    "Your Exness ID *{exid}* could not be verified as a referral of @lementorfx.\n\n"
-    "💡 *What to do?*\n"
-    "→ If you don't have an Exness account, create one here:\n"
-    f"{EXNESS_LINK}\n\n"
-    "→ If you already have one, contact @lementorfx.\n\n"
-    "Then type /start again."
-),
-
-"valide": (
-    "🎉 *Access granted!*\n\n"
-    "Your Exness referral has been verified ✅\n\n"
-    "🔐 *Your private channel access link:*\n"
-    "👇👇👇\n{canal}\n👆👆👆\n\n"
-    "Enable notifications 🔔\n"
-    "Read the pinned rules 📌\n\n"
-    "Questions → @lementorfx"
-),
-
-"cancel": "❌ Cancelled. /start to restart.",
-}
+"nom":   "━━━━━━━━━━━━━━━━━━━━━\n👤 *STEP 1 of 5 — Identity*\n━━━━━━━━━━━━━━━━━━━━━\n\nWhat is your *full name*?\n\n_Ex: John Smith_",
+"pays":  "━━━━━━━━━━━━━━━━━━━━━\n🌍 *STEP 2 of 5 — Country*\n━━━━━━━━━━━━━━━━━━━━━\n\nWhich *country* are you in?\n\n_Ex: Nigeria, UK, USA..._",
+"email": "━━━━━━━━━━━━━━━━━━━━━\n📧 *STEP 3 of 5 — Exness Email*\n━━━━━━━━━━━━━━━━━━━━━\n\nEnter the email used for your Exness account.\n\n⚠️ This will be cross-checked against @lementorfx's referral list.\n\n_Ex: yourname@gmail.com_",
+"ebad":  "❌ *Invalid email.* Enter a correct address:\n_Ex: yourname@gmail.com_",
+"edup":  "❌ *This email is already registered.*\nContact @lementorfx if this is an error.",
+"exq":   "━━━━━━━━━━━━━━━━━━━━━\n🏦 *STEP 4 of 5 — Exness Account*\n━━━━━━━━━━━━━━━━━━━━━\n\nDo you have an Exness account?\n\n💡 The channel is *100% free*. The only condition is registering via @lementorfx's link.",
+"noex":  f"⚠️ *No Exness account yet?*\n\nNo problem! It's *free* and takes 3 minutes.\n\n🔗 *Official link:*\n{EXNESS_LINK}\n\n✅ Once registered, come back and type /start",
+"exid":  "━━━━━━━━━━━━━━━━━━━━━\n🔢 *STEP 5 of 5 — Exness ID*\n━━━━━━━━━━━━━━━━━━━━━\n\nEnter your *Exness account ID*.\n\n📌 *How to find it:*\n1️⃣ Go to exness.com and log in\n2️⃣ Click your profile *(top right)*\n3️⃣ ID appears on the dashboard\n_(7 to 9 digit number)_\n\n👇 Enter your ID now:",
+"idbad": "❌ *Invalid ID.* Exness ID = 7 to 9 digits only.\nTry again:",
+"iddup": "❌ *This ID is already used.*\nContact @lementorfx if this is an error.",
+"recap": "━━━━━━━━━━━━━━━━━━━━━\n📋 *SUMMARY*\n━━━━━━━━━━━━━━━━━━━━━\n\n👤 Name: *{nom}*\n🌍 Country: *{pays}*\n📧 Email: *{email}*\n🏦 Exness ID: *{exid}*\n📱 Telegram: @{user}\n\n✅ Is everything correct?",
+"attente": "⏳ *Request submitted!*\n\n━━━━━━━━━━━━━━━━━━━━━\nYour info has been sent to *@lementorfx* for verification.\n\n📋 *What happens next:*\n\n1️⃣ @lementorfx checks your Exness ID\n   in his partner dashboard\n\n2️⃣ If you are his referral ✅\n   → You receive the channel link here\n\n3️⃣ If not ❌\n   → You receive an explanatory message\n\n━━━━━━━━━━━━━━━━━━━━━\n⏱ *Delay: a few hours maximum*\n\nQuestions? → @lementorfx 💬",
+"valide": "🎉 *ACCESS GRANTED!*\n\n━━━━━━━━━━━━━━━━━━━━━\nYour Exness referral has been *verified and approved* ✅\n\nWelcome to the *LeMentorFx* community! 🔥\n\n🔐 *Your private channel access link:*\n\n👇👇👇\n{canal}\n👆👆👆\n\n━━━━━━━━━━━━━━━━━━━━━\n📌 *Next steps:*\n1. Join via the link above\n2. Enable notifications 🔔\n3. Read the pinned rules\n4. Wait for the next signal 📡\n\nHappy trading! 🚀 @lementorfx",
+"rejete": f"❌ *Registration not approved*\n\n━━━━━━━━━━━━━━━━━━━━━\nExness ID *{{exid}}* could not be verified as a referral of @lementorfx.\n\n💡 *Solutions:*\n\n▸ No Exness account yet?\n  → Create one: {EXNESS_LINK}\n\n▸ Have an account but not via the link?\n  → Contact @lementorfx\n\n━━━━━━━━━━━━━━━━━━━━━\nOnce resolved, type /start to try again.",
+"cancel": "❌ Registration cancelled.\nType /start whenever you want to restart.",
+"deja":   "✅ You are already registered and validated!\nYou have channel access. Questions? → @lementorfx",
+}}
 
 def g(lang, key, **kw):
-    d = FR if lang=="fr" else EN
-    s = d.get(key,"")
+    s = T.get(lang, T["fr"]).get(key, "")
     return s.format(**kw) if kw else s
 
-logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
-
-# ── CONVERSATION ─────────────────────────────────────────
+# ═══════════════════════════════════════════════════════
+# CONVERSATION
+# ═══════════════════════════════════════════════════════
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if bloque(update.effective_user.id):
-        await update.message.reply_text("⛔"); return ConversationHandler.END
+    uid = update.effective_user.id
+    if is_blocked(uid):
+        await update.message.reply_text("⛔ Accès refusé. / Access denied.")
+        return ConversationHandler.END
+    if is_validated(uid):
+        await update.message.reply_text(g(ctx.user_data.get("l","fr"),"deja"), parse_mode="Markdown")
+        return ConversationHandler.END
     ctx.user_data.clear()
-    ctx.user_data["u"] = update.effective_user.username or str(update.effective_user.id)
+    ctx.user_data["u"] = update.effective_user.username or str(uid)
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("🇫🇷 Français", callback_data="L_fr"),
         InlineKeyboardButton("🇬🇧 English",  callback_data="L_en"),
     ]])
-    await update.message.reply_text(FR["lang"], parse_mode="Markdown", reply_markup=kb)
+    await update.message.reply_text(
+        "🌍 *Choisis ta langue / Choose your language:*",
+        parse_mode="Markdown", reply_markup=kb
+    )
     return S_LANG
 
 async def cb_lang(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     lang = "fr" if q.data=="L_fr" else "en"
     ctx.user_data["l"] = lang
-    await q.edit_message_text(g(lang,"bienve"), parse_mode="Markdown")
-    await q.message.reply_text(g(lang,"nom"), parse_mode="Markdown")
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🚀 Commencer / Start", callback_data="GO")
+    ]])
+    await q.edit_message_text(g(lang,"accueil"), parse_mode="Markdown", reply_markup=kb)
+    return S_NOM
+
+async def cb_go(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    lang = ctx.user_data.get("l","fr")
+    await q.edit_message_text(g(lang,"nom"), parse_mode="Markdown")
     return S_NOM
 
 async def h_nom(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    l = ctx.user_data.get("l","fr")
+    lang = ctx.user_data.get("l","fr")
     v = update.message.text.strip()
-    if len(v)<2: await update.message.reply_text("❌ Trop court."); return S_NOM
+    if len(v) < 2:
+        await update.message.reply_text("❌ Nom trop court. Réessaie."); return S_NOM
     ctx.user_data["nom"] = v
-    await update.message.reply_text(g(l,"pays"), parse_mode="Markdown")
+    await update.message.reply_text(g(lang,"pays"), parse_mode="Markdown")
     return S_PAYS
 
 async def h_pays(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    l = ctx.user_data.get("l","fr")
+    lang = ctx.user_data.get("l","fr")
     ctx.user_data["pays"] = update.message.text.strip()
-    await update.message.reply_text(g(l,"email"), parse_mode="Markdown")
+    await update.message.reply_text(g(lang,"email"), parse_mode="Markdown")
     return S_EMAIL
 
 async def h_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    l = ctx.user_data.get("l","fr")
+    lang = ctx.user_data.get("l","fr")
     v = update.message.text.strip().lower()
-    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$",v):
-        await update.message.reply_text(g(l,"ebad"), parse_mode="Markdown"); return S_EMAIL
-    if mail_exist(v):
-        await update.message.reply_text(g(l,"edup"), parse_mode="Markdown"); return ConversationHandler.END
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+        await update.message.reply_text(g(lang,"ebad"), parse_mode="Markdown"); return S_EMAIL
+    if mail_used(v):
+        await update.message.reply_text(g(lang,"edup"), parse_mode="Markdown"); return ConversationHandler.END
     ctx.user_data["email"] = v
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Oui / Yes",              callback_data="EX_oui")],
-        [InlineKeyboardButton("❌ Pas encore / Not yet",   callback_data="EX_non")],
-        [InlineKeyboardButton("🔄 En cours / In progress", callback_data="EX_oui")],
+        [InlineKeyboardButton("✅ Oui, j'en ai un / Yes I have one", callback_data="EX_oui")],
+        [InlineKeyboardButton("🔄 En cours d'inscription / Registering", callback_data="EX_oui")],
+        [InlineKeyboardButton("❌ Pas encore / Not yet", callback_data="EX_non")],
     ])
-    await update.message.reply_text(g(l,"exq"), parse_mode="Markdown", reply_markup=kb)
+    await update.message.reply_text(g(lang,"exq"), parse_mode="Markdown", reply_markup=kb)
     return S_EXQ
 
 async def cb_exq(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    l = ctx.user_data.get("l","fr")
-    if q.data=="EX_non":
-        await q.edit_message_text(g(l,"noex"), parse_mode="Markdown"); return ConversationHandler.END
-    await q.edit_message_text(g(l,"exid"), parse_mode="Markdown")
+    lang = ctx.user_data.get("l","fr")
+    if q.data == "EX_non":
+        await q.edit_message_text(g(lang,"noex"), parse_mode="Markdown")
+        return ConversationHandler.END
+    await q.edit_message_text(g(lang,"exid"), parse_mode="Markdown")
     return S_EXID
 
 async def h_exid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    l = ctx.user_data.get("l","fr")
+    lang = ctx.user_data.get("l","fr")
     v = update.message.text.strip().replace(" ","")
-    if not re.match(r"^\d{7,9}$",v):
-        await update.message.reply_text(g(l,"idbad"), parse_mode="Markdown"); return S_EXID
-    if eid_exist(v):
-        await update.message.reply_text(g(l,"iddup"), parse_mode="Markdown"); return ConversationHandler.END
+    if not re.match(r"^\d{7,9}$", v):
+        await update.message.reply_text(g(lang,"idbad"), parse_mode="Markdown"); return S_EXID
+    if eid_used(v):
+        await update.message.reply_text(g(lang,"iddup"), parse_mode="Markdown"); return ConversationHandler.END
     ctx.user_data["exid"] = v
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Confirmer / Confirm", callback_data="C_ok"),
-        InlineKeyboardButton("✏️ Corriger / Edit",     callback_data="C_edit"),
+        InlineKeyboardButton("✅ Oui, confirmer / Yes, confirm", callback_data="C_ok"),
+        InlineKeyboardButton("✏️ Corriger / Edit", callback_data="C_edit"),
     ]])
     await update.message.reply_text(
-        g(l,"recap", nom=ctx.user_data.get("nom","—"), pays=ctx.user_data.get("pays","—"),
+        g(lang,"recap",
+          nom=ctx.user_data.get("nom","—"), pays=ctx.user_data.get("pays","—"),
           email=ctx.user_data.get("email","—"), exid=v, user=ctx.user_data.get("u","—")),
         parse_mode="Markdown", reply_markup=kb)
     return S_CONFIRM
 
 async def cb_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    l = ctx.user_data.get("l","fr")
-    if q.data=="C_edit":
-        await q.edit_message_text(g(l,"exid"), parse_mode="Markdown"); return S_EXID
+    lang = ctx.user_data.get("l","fr")
+
+    if q.data == "C_edit":
+        await q.edit_message_text(g(lang,"exid"), parse_mode="Markdown")
+        return S_EXID
 
     uid  = update.effective_user.id
     nom  = ctx.user_data.get("nom","—")
@@ -261,57 +348,66 @@ async def cb_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     exid = ctx.user_data.get("exid","—")
     user = ctx.user_data.get("u","—")
 
-    # Sauvegarde EN ATTENTE (pas validé encore)
-    mettre_en_attente(uid, {
-        "nom":nom,"pays":pays,"email":email,
-        "exness_id":exid,"username":user,"lang":l,"user_id":uid
-    })
+    # Sauvegarde EN ATTENTE
+    save_pending(uid, {"nom":nom,"pays":pays,"email":email,"exness_id":exid,
+                       "username":user,"lang":lang,"user_id":uid})
 
-    # Message au client : attendre la vérification
-    await q.edit_message_text(g(l,"attente"), parse_mode="Markdown")
+    # ── Message au client : ATTENTE ──
+    await q.edit_message_text(g(lang,"attente"), parse_mode="Markdown")
 
-    # ── NOTIFICATION ADMIN avec boutons VALIDER / REJETER ──
+    # ── Notification ADMIN avec boutons VALIDER / REJETER ──
     kb_admin = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ VALIDER",  callback_data=f"ADM_ok_{uid}"),
-        InlineKeyboardButton("❌ REJETER",  callback_data=f"ADM_no_{uid}"),
+        InlineKeyboardButton("✅ VALIDER L'ACCÈS",  callback_data=f"A_ok_{uid}"),
+        InlineKeyboardButton("❌ REJETER",           callback_data=f"A_no_{uid}"),
     ]])
+
+    notif_text = (
+        f"🆕 *NOUVELLE DEMANDE D'ACCÈS*\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 Nom : *{nom}*\n"
+        f"🌍 Pays : *{pays}*\n"
+        f"📧 Email : `{email}`\n"
+        f"🏦 ID Exness : `{exid}`\n"
+        f"📱 Telegram : @{user}\n"
+        f"🆔 User ID : `{uid}`\n"
+        f"📅 {datetime.now().strftime('%d/%m/%Y à %H:%M')}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📌 Vérifie sur ton espace Exness Partner\n"
+        f"que cet email/ID est bien ton filleul.\n\n"
+        f"👇 Puis clique ci-dessous :"
+    )
+
     try:
         await ctx.bot.send_message(
             chat_id=ADMIN_ID,
-            text=(
-                f"🆕 *NOUVELLE DEMANDE*\n\n"
-                f"👤 {nom}\n🌍 {pays}\n📧 {email}\n"
-                f"🏦 ID Exness: `{exid}`\n📱 @{user}\n🆔 {uid}\n"
-                f"📅 {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-                f"📌 *Vérifie sur ton espace Exness que cet ID / email est bien ton filleul.*\n"
-                f"Puis clique ✅ VALIDER ou ❌ REJETER ci-dessous."
-            ),
+            text=notif_text,
             parse_mode="Markdown",
             reply_markup=kb_admin
         )
+        log.info(f"Notif admin envoyée pour {nom} ({uid})")
     except Exception as e:
-        logging.warning(f"notif admin: {e}")
+        log.error(f"ERREUR notif admin: {e}")
 
     return ConversationHandler.END
 
-# ── ADMIN : VALIDER OU REJETER ────────────────────────────
+# ═══════════════════════════════════════════════════════
+# ADMIN — VALIDER / REJETER
+# ═══════════════════════════════════════════════════════
 
-async def cb_admin_decision(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cb_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if update.effective_user.id != ADMIN_ID:
-        await q.answer("⛔ Non autorisé."); return
+        await q.answer("⛔ Non autorisé.", show_alert=True); return
     await q.answer()
 
-    parts = q.data.split("_")  # ADM_ok_12345 ou ADM_no_12345
+    parts  = q.data.split("_")   # A_ok_12345 ou A_no_12345
     action = parts[1]
     uid    = int(parts[2])
 
     if action == "ok":
-        d = valider_membre(uid)
+        d = approve(uid)
         if not d:
-            await q.edit_message_text(f"⚠️ Membre {uid} introuvable en attente."); return
-
-        # Envoie le lien au client
+            await q.edit_message_text("⚠️ Introuvable en attente. Déjà traité ?"); return
         lang = d.get("lang","fr")
         try:
             await ctx.bot.send_message(
@@ -319,20 +415,20 @@ async def cb_admin_decision(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 text=g(lang,"valide", canal=CANAL_PRIVE),
                 parse_mode="Markdown"
             )
+            await q.edit_message_text(
+                f"✅ *Validé !*\n\n"
+                f"👤 {d.get('nom')} (@{d.get('username')})\n"
+                f"🏦 ID: {d.get('exness_id')}\n\n"
+                f"Le lien du canal lui a été envoyé ✅",
+                parse_mode="Markdown"
+            )
         except Exception as e:
-            logging.warning(f"Envoi lien client: {e}")
-
-        await q.edit_message_text(
-            f"✅ *Validé et lien envoyé à {d.get('nom','?')}* (@{d.get('username','?')})\n"
-            f"🏦 ID Exness: {d.get('exness_id','?')}",
-            parse_mode="Markdown"
-        )
+            await q.edit_message_text(f"⚠️ Validé en base mais erreur envoi : {e}")
 
     elif action == "no":
-        d = rejeter_membre(uid)
+        d = reject(uid)
         if not d:
-            await q.edit_message_text(f"⚠️ Membre {uid} introuvable."); return
-
+            await q.edit_message_text("⚠️ Introuvable en attente. Déjà traité ?"); return
         lang = d.get("lang","fr")
         try:
             await ctx.bot.send_message(
@@ -340,90 +436,132 @@ async def cb_admin_decision(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 text=g(lang,"rejete", exid=d.get("exness_id","?")),
                 parse_mode="Markdown"
             )
+            await q.edit_message_text(
+                f"❌ *Rejeté*\n\n"
+                f"👤 {d.get('nom')} (@{d.get('username')})\n"
+                f"🏦 ID: {d.get('exness_id')}\n\n"
+                f"Le client a été informé du rejet.",
+                parse_mode="Markdown"
+            )
         except Exception as e:
-            logging.warning(f"Envoi rejet client: {e}")
+            await q.edit_message_text(f"⚠️ Rejeté en base mais erreur envoi : {e}")
 
-        await q.edit_message_text(
-            f"❌ *Rejeté : {d.get('nom','?')}* (@{d.get('username','?')})\n"
-            f"🏦 ID: {d.get('exness_id','?')}",
-            parse_mode="Markdown"
-        )
-
-# ── COMMANDES ADMIN ───────────────────────────────────────
-
-async def cmd_attente(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    db = load_db()
-    items = list(db.get("en_attente",{}).values())
-    if not items: await update.message.reply_text("✅ Aucune demande en attente."); return
-    lines = [f"• *{x.get('nom','?')}* | {x.get('email','?')} | ID:{x.get('exness_id','?')} | uid:{x.get('user_id','?')}" for x in items]
-    await update.message.reply_text("⏳ *Demandes en attente :*\n\n"+"\n".join(lines), parse_mode="Markdown")
+# ═══════════════════════════════════════════════════════
+# COMMANDES ADMIN
+# ═══════════════════════════════════════════════════════
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     db = load_db()
     await update.message.reply_text(
-        f"📊 *Stats LeMentorFx*\n\n"
-        f"👥 Membres validés : *{len(db['membres'])}*\n"
-        f"⏳ En attente : *{len(db.get('en_attente',{}))}*\n"
-        f"🏦 IDs Exness : *{len(db['exness_ids'])}*\n"
-        f"📧 Emails : *{len(db['emails'])}*",
+        f"📊 *Stats LeMentorFx Bot*\n\n"
+        f"✅ Membres validés : *{len(db.get('valides',{}))}*\n"
+        f"⏳ En attente : *{len(db.get('attente',{}))}*\n"
+        f"❌ Rejetés : *{len(db.get('rejetes',{}))}*\n"
+        f"🏦 IDs Exness enregistrés : *{len(db.get('exness_ids',[]))}*\n"
+        f"📧 Emails enregistrés : *{len(db.get('emails',[]))}*",
+        parse_mode="Markdown")
+
+async def cmd_attente(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    db = load_db()
+    items = list(db.get("attente",{}).values())
+    if not items:
+        await update.message.reply_text("✅ Aucune demande en attente."); return
+    lines = []
+    for x in items:
+        lines.append(
+            f"• *{x.get('nom','?')}* | {x.get('pays','?')}\n"
+            f"  📧 {x.get('email','?')}\n"
+            f"  🏦 ID: {x.get('exness_id','?')}\n"
+            f"  📱 @{x.get('username','?')} | uid: {x.get('user_id','?')}"
+        )
+    await update.message.reply_text(
+        f"⏳ *{len(items)} demande(s) en attente :*\n\n" + "\n\n".join(lines),
         parse_mode="Markdown")
 
 async def cmd_liste(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     db = load_db()
-    items = [x for x in list(db["membres"].values()) if x.get("statut")=="validé"][-15:]
-    if not items: await update.message.reply_text("Aucun membre validé."); return
-    lines = [f"• {x.get('nom','?')} | {x.get('pays','?')} | {x.get('email','?')} | {x.get('exness_id','?')}" for x in items]
+    items = list(db.get("valides",{}).values())[-15:]
+    if not items: await update.message.reply_text("Aucun membre validé encore."); return
+    lines = [f"• *{x.get('nom','?')}* | {x.get('pays','?')} | {x.get('email','?')} | {x.get('exness_id','?')}" for x in items]
     await update.message.reply_text("📋 *Membres validés :*\n\n"+"\n".join(lines), parse_mode="Markdown")
 
 async def cmd_bloquer(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    if not ctx.args: await update.message.reply_text("Usage: /bloquer [id]"); return
+    if not ctx.args: await update.message.reply_text("Usage: /bloquer [user_id]"); return
     try:
         uid=int(ctx.args[0]); db=load_db()
         if uid not in db["bloques"]: db["bloques"].append(uid); save_db(db)
-        await update.message.reply_text(f"✅ {uid} bloqué.")
-    except: await update.message.reply_text("ID invalide.")
+        await update.message.reply_text(f"✅ User {uid} bloqué définitivement.")
+    except: await update.message.reply_text("❌ ID invalide.")
 
 async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    l = ctx.user_data.get("l","fr")
-    await update.message.reply_text(g(l,"cancel")); return ConversationHandler.END
+    lang = ctx.user_data.get("l","fr")
+    await update.message.reply_text(g(lang,"cancel"), parse_mode="Markdown")
+    return ConversationHandler.END
 
 async def msg_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Tape /start pour t'inscrire. / Type /start to register.")
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 S'inscrire / Register", callback_data="RESTART")]])
+    await update.message.reply_text(
+        "👋 Tape /start ou appuie sur le bouton ci-dessous pour t'inscrire.\n"
+        "Type /start or press the button below to register.",
+        reply_markup=kb
+    )
 
-# ── MAIN ─────────────────────────────────────────────────
+async def cb_restart(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    await q.message.reply_text("/start")
+    return await cmd_start(update, ctx)
+
+# ═══════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════
+
+async def post_init(app):
+    """Configure les commandes visibles dans le menu Telegram"""
+    await app.bot.set_my_commands([
+        BotCommand("start",   "🚀 Démarrer l'inscription"),
+        BotCommand("annuler", "❌ Annuler"),
+    ])
 
 def main():
-    app = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).post_init(post_init).build()
 
     conv = ConversationHandler(
-        entry_points=[CommandHandler("start", cmd_start)],
+        entry_points=[
+            CommandHandler("start", cmd_start),
+            CallbackQueryHandler(cb_restart, pattern="^RESTART$"),
+        ],
         states={
-            S_LANG:    [CallbackQueryHandler(cb_lang,    pattern="^L_")],
-            S_NOM:     [MessageHandler(filters.TEXT & ~filters.COMMAND, h_nom)],
+            S_LANG:    [CallbackQueryHandler(cb_lang, pattern="^L_")],
+            S_NOM:     [
+                CallbackQueryHandler(cb_go, pattern="^GO$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, h_nom),
+            ],
             S_PAYS:    [MessageHandler(filters.TEXT & ~filters.COMMAND, h_pays)],
             S_EMAIL:   [MessageHandler(filters.TEXT & ~filters.COMMAND, h_email)],
-            S_EXQ:     [CallbackQueryHandler(cb_exq,    pattern="^EX_")],
+            S_EXQ:     [CallbackQueryHandler(cb_exq,     pattern="^EX_")],
             S_EXID:    [MessageHandler(filters.TEXT & ~filters.COMMAND, h_exid)],
             S_CONFIRM: [CallbackQueryHandler(cb_confirm, pattern="^C_")],
         },
-        fallbacks=[CommandHandler("annuler", cmd_cancel), CommandHandler("cancel", cmd_cancel)],
+        fallbacks=[
+            CommandHandler("annuler", cmd_cancel),
+            CommandHandler("cancel",  cmd_cancel),
+        ],
         allow_reentry=True,
     )
 
     app.add_handler(conv)
-    # Handler admin VALIDER/REJETER — doit être en dehors de la conversation
-    app.add_handler(CallbackQueryHandler(cb_admin_decision, pattern="^ADM_"))
-    app.add_handler(CommandHandler("stats",    cmd_stats))
-    app.add_handler(CommandHandler("liste",    cmd_liste))
-    app.add_handler(CommandHandler("attente",  cmd_attente))
-    app.add_handler(CommandHandler("bloquer",  cmd_bloquer))
+    app.add_handler(CallbackQueryHandler(cb_admin, pattern="^A_(ok|no)_"))
+    app.add_handler(CommandHandler("stats",   cmd_stats))
+    app.add_handler(CommandHandler("liste",   cmd_liste))
+    app.add_handler(CommandHandler("attente", cmd_attente))
+    app.add_handler(CommandHandler("bloquer", cmd_bloquer))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_other))
 
-    print("✅ LeMentorFx Bot v2 démarré — vérification manuelle activée")
+    print("✅ LeMentorFx Bot FINAL démarré — validation manuelle activée")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
