@@ -9,22 +9,38 @@ from telegram.ext import (
 TOKEN       = "7575039426:AAHnnxr8L7OVdy5TuSsA45rt1l1ID5ubFYc"
 ADMIN_ID    = 7412212489
 EXNESS_LINK = "https://one.exnessonelink.com/a/do7n4lz3on"
-DB_FILE     = "membres_vip.json"
+DB_FILE     = "membres.json"
 
-# ═══════════════════════════════════════════════════════
-# CANAUX VIP DISPONIBLES
-# ═══════════════════════════════════════════════════════
+# ── CANAUX ──────────────────────────────────────────────
+CANAL_VIP_SIGNAUX  = "https://t.me/+HJ9qJhRZ7mg0MmFk"
+CANAL_VIP_ROBOTS   = "https://t.me/+N-Atm_7qeHMxZTM8"
+CANAL_PUB_SIGNAUX  = "https://t.me/lementorforexgroup"
+CANAL_PUB_ROBOTS   = "https://t.me/robotradingratuit"
 
-CANAUX = {
-    "1": {"nom": "LeMentor Signal",             "emoji": "📡", "lien": "https://t.me/+HJ9qJhRZ7mg0MmFk"},
-    "2": {"nom": "Forex Master Mind",           "emoji": "🧠", "lien": "https://t.me/+O-qp8FFqU3M2YzU0"},
-    "3": {"nom": "Forex Manipulation",          "emoji": "🎯", "lien": "https://t.me/+nmaRfODrkkJhNTJk"},
-    "4": {"nom": "Supply & Demand Intraday",    "emoji": "📊", "lien": "https://t.me/+PNPC0O0teFhiMGY0"},
-    "5": {"nom": "Sadeeq FX",                   "emoji": "💎", "lien": "https://t.me/+RM5QY9P10mM1ODRk"},
-    "6": {"nom": "ShadTrading Premium",         "emoji": "🔥", "lien": "https://t.me/+Tn3gEe_HOediN2M0"},
-}
+# ── PAIEMENT ROBOTS ─────────────────────────────────────
+PRIX_ROBOTS = "200 USD"
+PAIEMENT_INFO = (
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "💳 *MÉTHODES DE PAIEMENT*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "🟡 *Binance Pay*\n"
+    "   ID : `556807688`\n\n"
+    "🔵 *Binance USDT TRC20*\n"
+    "   `TEWKJtPsn4RsrEt2kiLNCDMUVKLGQ6RLJb`\n\n"
+    "🔵 *PayPal*\n"
+    "   `capor51@gmail.com`\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "⚠️ *Montant exact :* `200 USD`\n\n"
+    "📸 *Après paiement :*\n"
+    "Envoie une capture d'écran de ta confirmation\n"
+    "de paiement directement ici dans le bot.\n\n"
+    "✅ @lementorfx vérifie et te donne l'accès."
+)
 
-S_LANG, S_NOM, S_PAYS, S_EMAIL, S_EXQ, S_EXID, S_CHOIX, S_CONFIRM = range(8)
+# ── ÉTATS ───────────────────────────────────────────────
+(S_LANG, S_MENU, S_NOM, S_PAYS, S_EMAIL,
+ S_EXQ, S_EXID, S_CONFIRM,
+ S_ATTENTE_PAIEMENT) = range(9)
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -36,7 +52,8 @@ log = logging.getLogger(__name__)
 def load_db():
     if os.path.exists(DB_FILE):
         with open(DB_FILE,"r",encoding="utf-8") as f: return json.load(f)
-    return {"valides":{},"attente":{},"rejetes":{},"exness_ids":[],"emails":[],"bloques":[]}
+    return {"valides":{},"attente":{},"attente_paiement":{},"rejetes":{},
+            "exness_ids":[],"emails":[],"bloques":[]}
 
 def save_db(db):
     with open(DB_FILE,"w",encoding="utf-8") as f: json.dump(db,f,ensure_ascii=False,indent=2)
@@ -47,197 +64,410 @@ def is_blocked(u):   return u in load_db().get("bloques",[])
 def is_validated(u): return str(u) in load_db().get("valides",{})
 
 def save_pending(uid, d):
-    db = load_db()
-    db["attente"][str(uid)] = {**d, "date": datetime.now().isoformat()}
-    save_db(db)
+    db = load_db(); db["attente"][str(uid)] = {**d,"date":datetime.now().isoformat()}; save_db(db)
 
-def approve(uid):
-    db = load_db()
-    k = str(uid)
+def save_pending_payment(uid, d):
+    db = load_db(); db["attente_paiement"][str(uid)] = {**d,"date":datetime.now().isoformat()}; save_db(db)
+
+def approve_signal(uid):
+    db = load_db(); k = str(uid)
     if k not in db["attente"]: return None
-    d = db["attente"].pop(k)
-    d["statut"] = "validé"
+    d = db["attente"].pop(k); d["statut"] = "validé_signaux"
     db["valides"][k] = d
     if d.get("exness_id"): db["exness_ids"].append(d["exness_id"])
     if d.get("email"):     db["emails"].append(d["email"].lower())
-    save_db(db)
-    return d
+    save_db(db); return d
 
-def reject(uid):
-    db = load_db()
-    k = str(uid)
+def reject_member(uid):
+    db = load_db(); k = str(uid)
     if k not in db["attente"]: return None
-    d = db["attente"].pop(k)
-    d["statut"] = "rejeté"
-    db["rejetes"][k] = d
-    save_db(db)
-    return d
+    d = db["attente"].pop(k); d["statut"] = "rejeté"; db["rejetes"][k] = d; save_db(db); return d
+
+def approve_robot(uid):
+    db = load_db(); k = str(uid)
+    if k not in db["attente_paiement"]: return None
+    d = db["attente_paiement"].pop(k); d["statut"] = "validé_robots"; save_db(db); return d
+
+def reject_payment(uid):
+    db = load_db(); k = str(uid)
+    if k not in db["attente_paiement"]: return None
+    d = db["attente_paiement"].pop(k); d["statut"] = "paiement_rejeté"
+    db["rejetes"][k+"_pay"] = d; save_db(db); return d
 
 # ═══════════════════════════════════════════════════════
-# TEXTES
+# TEXTES FR / EN
 # ═══════════════════════════════════════════════════════
 
 T = {
 "fr": {
+
 "accueil": (
-    "👋 *Bonjour et bienvenue !*\n\n"
-    "Je suis l'assistant officiel de *LeMentorFx* 🤖\n\n"
+    "👋 *Bienvenue chez LeMentorFx !*\n\n"
+    "Je suis ton assistant officiel 🤖\n"
+    "Géré par *@lementorfx* — Partenaire IB Exness\n\n"
     "━━━━━━━━━━━━━━━━━━━━━\n"
-    "🏆 *Accès VIP — Ce que tu vas recevoir :*\n\n"
-    "📡 Signaux XAU/USD *(PHANTOM TRAP)*\n"
-    "🧠 Analyses Forex avancées\n"
-    "🎯 Stratégies de manipulation\n"
-    "📊 Supply & Demand Intraday\n"
-    "💎 Contenus premium exclusifs\n"
-    "🔥 Groupes de traders professionnels\n"
+    "🎓 *Ce que nous proposons :*\n\n"
+    "📚 *Option 1 — GRATUIT*\n"
+    "Formation de base en trading\n"
+    "Comment lire et appliquer un signal\n"
+    "Accès au salon de signaux VIP XAU/USD\n\n"
+    "🤖 *Option 2 — 200 USD à vie*\n"
+    "Accès illimité au VIP Robots MT4/MT5\n"
+    "Téléchargement gratuit de tous les robots\n"
+    "Mises à jour incluses à vie\n"
     "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "✅ *Condition unique :* être filleul Exness de @lementorfx\n\n"
-    "⏱ Inscription en *2 minutes*\n\n"
-    "👇 *Appuie sur Commencer pour démarrer*"
+    "👇 *Choisis ton option ci-dessous*"
 ),
+
+"menu": (
+    "🔽 *Que souhaites-tu faire ?*\n\n"
+    "📢 Tu peux d'abord *rejoindre nos groupes publics gratuits*\n"
+    "pour avoir une idée de ce qui se passe dans le VIP 👇"
+),
+
+"publics": (
+    "👀 *Avant de t'inscrire, rejoins nos groupes publics :*\n\n"
+    "📡 Groupe signaux & éducation *(public)* :\n"
+    f"{CANAL_PUB_SIGNAUX}\n\n"
+    "🤖 Groupe robots de trading *(public)* :\n"
+    f"{CANAL_PUB_ROBOTS}\n\n"
+    "Tu peux voir ce qui s'y passe et décider ensuite.\n"
+    "Quand tu es prêt → reviens et choisis ton option !"
+),
+
+"choix_signaux": (
+    "📚 *ACCÈS VIP SIGNAUX & ÉDUCATION*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "*100% GRATUIT* ✅\n\n"
+    "Ce que tu obtiens :\n"
+    "• 🎓 Formation de base en trading\n"
+    "• 📈 Comment appliquer un signal correctement\n"
+    "• 📡 Signaux XAU/USD en temps réel *(PHANTOM TRAP)*\n"
+    "• 🔗 Accès au Google Drive avec la formation complète\n"
+    "• 🌍 Disponible en Français et English\n\n"
+    "*Condition :* être filleul Exness de @lementorfx\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Clique *Commencer l'inscription* pour continuer 👇"
+),
+
+"choix_robots": (
+    "🤖 *ACCÈS VIP ROBOTS MT4/MT5*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "*200 USD — Accès à vie* 💎\n\n"
+    "Ce que tu obtiens :\n"
+    "• 🤖 Téléchargement illimité de tous les robots\n"
+    "• 📊 Robots Martingale, Hedging, One Shot, Grid, Scalping\n"
+    "• 🔄 Mises à jour gratuites à vie\n"
+    "• 📱 Compatible MT4 & MT5\n"
+    "• 💬 Support technique inclus\n\n"
+    "*Méthodes de paiement :*\n"
+    "Binance Pay • Binance USDT TRC20 • PayPal\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Clique *Voir les détails de paiement* pour continuer 👇"
+),
+
 "nom":   "━━━━━━━━━━━━━━━━━━━━━\n👤 *ÉTAPE 1 / 5 — Identité*\n━━━━━━━━━━━━━━━━━━━━━\n\nQuel est ton *nom complet* ?\n\n_Ex : Jean-Pierre Mvogo_",
 "pays":  "━━━━━━━━━━━━━━━━━━━━━\n🌍 *ÉTAPE 2 / 5 — Pays*\n━━━━━━━━━━━━━━━━━━━━━\n\nDans quel pays es-tu situé ?\n\n_Ex : Cameroun, Sénégal, France..._",
-"email": (
-    "━━━━━━━━━━━━━━━━━━━━━\n"
-    "📧 *ÉTAPE 3 / 5 — Email Exness*\n"
-    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "Entre l'adresse email de ton compte Exness.\n\n"
-    "⚠️ Cet email sera vérifié sur le tableau de bord "
-    "partenaire de @lementorfx pour confirmer le parrainage.\n\n"
-    "_Ex : tonnom@gmail.com_"
-),
+"email": "━━━━━━━━━━━━━━━━━━━━━\n📧 *ÉTAPE 3 / 5 — Email Exness*\n━━━━━━━━━━━━━━━━━━━━━\n\nEntre l'adresse email de ton compte Exness.\n\n⚠️ Cet email sera vérifié pour confirmer ton parrainage.\n\n_Ex : tonnom@gmail.com_",
 "ebad":  "❌ *Email invalide.* Entre une adresse correcte :\n_Ex : tonnom@gmail.com_",
 "edup":  "❌ *Email déjà enregistré.*\nContacte @lementorfx si c'est une erreur.",
-"exq":   (
-    "━━━━━━━━━━━━━━━━━━━━━\n"
-    "🏦 *ÉTAPE 4 / 5 — Compte Exness*\n"
-    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "As-tu un compte Exness ?\n\n"
-    "💡 L'accès VIP est *100% gratuit*.\n"
-    "Seule condition : être inscrit via le lien de @lementorfx."
-),
-"noex":  (
-    "⚠️ *Pas encore de compte Exness ?*\n\n"
-    "C'est *gratuit* et ça prend 3 minutes !\n\n"
-    f"🔗 *Lien officiel de parrainage :*\n{EXNESS_LINK}\n\n"
-    "✅ Une fois inscrit, reviens ici et tape /start\n"
-    "Je t'accompagnerai pour finaliser ton accès VIP."
-),
-"exid":  (
-    "━━━━━━━━━━━━━━━━━━━━━\n"
-    "🔢 *ÉTAPE 5 / 5 — ID Exness*\n"
-    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "Entre ton *ID de compte Exness*\n_(numéro de 7 à 9 chiffres)_\n\n"
-    "📌 *Comment trouver ton ID :*\n"
-    "1️⃣ Va sur *exness.com* → connecte-toi\n"
-    "2️⃣ Clique sur ton *Profil* _(haut à droite)_\n"
-    "3️⃣ L'ID s'affiche sur le tableau de bord\n\n"
-    "👇 Entre ton ID maintenant :"
-),
-"idbad": "❌ *ID invalide.* L'ID Exness = 7 à 9 chiffres uniquement.\nEssaie encore :",
+"exq":   "━━━━━━━━━━━━━━━━━━━━━\n🏦 *ÉTAPE 4 / 5 — Compte Exness*\n━━━━━━━━━━━━━━━━━━━━━\n\nAs-tu un compte Exness ?\n\n💡 L'accès VIP signaux est *gratuit*.\nCondition : être inscrit via le lien de @lementorfx.",
+"noex":  f"⚠️ *Pas encore de compte Exness ?*\n\nC'est *gratuit* et rapide !\n\n🔗 Lien officiel :\n{EXNESS_LINK}\n\n✅ Une fois inscrit, reviens taper /start",
+"exid":  "━━━━━━━━━━━━━━━━━━━━━\n🔢 *ÉTAPE 5 / 5 — ID Exness*\n━━━━━━━━━━━━━━━━━━━━━\n\nEntre ton *ID Exness* _(7 à 9 chiffres)_\n\n📌 *Comment trouver :*\n1️⃣ exness.com → connecte-toi\n2️⃣ Clique *Profil* _(haut à droite)_\n3️⃣ L'ID s'affiche sur le tableau de bord\n\n👇 Entre ton ID :",
+"idbad": "❌ *ID invalide.* L'ID Exness = 7 à 9 chiffres.\nRéessaie :",
 "iddup": "❌ *Cet ID est déjà utilisé.*\nContacte @lementorfx si c'est une erreur.",
-"choix": (
+"recap": "━━━━━━━━━━━━━━━━━━━━━\n📋 *RÉCAPITULATIF*\n━━━━━━━━━━━━━━━━━━━━━\n\n👤 Nom : *{nom}*\n🌍 Pays : *{pays}*\n📧 Email : *{email}*\n🏦 ID Exness : *{exid}*\n📱 Telegram : @{user}\n\nTout est correct ?",
+
+"attente_signal": (
+    "⏳ *Demande envoyée !*\n\n"
     "━━━━━━━━━━━━━━━━━━━━━\n"
-    "🏆 *CHOIX DES GROUPES VIP*\n"
-    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "Sélectionne les groupes auxquels tu veux accéder.\n"
-    "Tu peux en choisir *un ou plusieurs*, ou *tous* !\n\n"
-    "✅ = sélectionné | ☐ = non sélectionné\n\n"
-    "👇 Sélectionne puis appuie sur *Confirmer* :"
-),
-"recap": (
-    "━━━━━━━━━━━━━━━━━━━━━\n"
-    "📋 *RÉCAPITULATIF*\n"
-    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "👤 Nom : *{nom}*\n"
-    "🌍 Pays : *{pays}*\n"
-    "📧 Email : *{email}*\n"
-    "🏦 ID Exness : *{exid}*\n"
-    "📱 Telegram : @{user}\n\n"
-    "🏆 *Groupes demandés :*\n{groupes}\n\n"
-    "Tout est correct ?"
-),
-"attente": (
-    "⏳ *Demande envoyée avec succès !*\n\n"
-    "━━━━━━━━━━━━━━━━━━━━━\n"
-    "Tes informations ont été transmises à *@lementorfx*.\n\n"
+    "Tes infos ont été transmises à *@lementorfx*\n"
+    "pour vérification de ton parrainage Exness.\n\n"
     "📋 *Prochaines étapes :*\n\n"
     "1️⃣ @lementorfx vérifie ton ID Exness\n"
-    "   sur son espace partenaire\n\n"
-    "2️⃣ Si tu es bien son filleul ✅\n"
-    "   → Tu reçois les liens VIP ici\n\n"
-    "3️⃣ Si non ❌\n"
-    "   → Tu reçois un message explicatif\n\n"
+    "2️⃣ Si validé ✅ → tu reçois le lien VIP ici\n"
+    "3️⃣ Si non ❌ → tu reçois un message explicatif\n\n"
+    "⏱ Délai : *quelques heures maximum*\n\n"
     "━━━━━━━━━━━━━━━━━━━━━\n"
-    "⏱ *Délai : quelques heures maximum*\n\n"
+    "⬇️ *En attendant, rejoins nos groupes publics :*\n\n"
+    f"📡 Signaux & Éducation *(public)* :\n{CANAL_PUB_SIGNAUX}\n\n"
+    f"🤖 Robots Trading *(public)* :\n{CANAL_PUB_ROBOTS}\n\n"
     "Questions → @lementorfx 💬"
 ),
-"valide": (
+
+"valide_signal": (
     "🎉 *ACCÈS VIP ACCORDÉ !*\n\n"
     "━━━━━━━━━━━━━━━━━━━━━\n"
-    "Ton parrainage Exness a été *vérifié et validé* ✅\n\n"
+    "Ton parrainage Exness est *vérifié et validé* ✅\n\n"
     "Bienvenue dans la communauté *LeMentorFx* ! 🔥\n\n"
-    "🏆 *Tes accès VIP :*\n\n"
-    "{liens}\n"
-    "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "📌 *Pour chaque groupe :*\n"
-    "• Clique le lien → Rejoins\n"
-    "• Active les notifications 🔔\n"
-    "• Lis les règles épinglées\n\n"
-    "Bon trading ! 🚀\n"
-    "Des questions → @lementorfx"
-),
-"rejete": (
-    "❌ *Accès VIP non accordé*\n\n"
+    "🔐 *Ton accès VIP Signaux & Éducation :*\n\n"
+    f"📡 *Canal VIP* :\n{CANAL_VIP_SIGNAUX}\n\n"
     "━━━━━━━━━━━━━━━━━━━━━\n"
-    "L'ID Exness *{exid}* n'a pas pu être vérifié\n"
-    "comme filleul de @lementorfx.\n\n"
+    "📌 *Dans ce canal tu trouveras :*\n"
+    "• 🎓 Formation de base en trading _(Google Drive épinglé)_\n"
+    "• 📈 Comment lire et appliquer un signal\n"
+    "• 📡 Signaux XAU/USD en temps réel\n\n"
+    "✅ Rejoins le canal et active les notifications 🔔\n\n"
+    "Bon trading ! 🚀 @lementorfx"
+),
+
+"rejete": (
+    "❌ *Accès non accordé*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "L'ID Exness *{exid}* n'a pas été trouvé\n"
+    "dans les filleuls de @lementorfx.\n\n"
     "💡 *Solutions :*\n\n"
-    "▸ Pas encore de compte Exness ?\n"
-    f"  → Crée-en un : {EXNESS_LINK}\n\n"
+    f"▸ Pas de compte Exness ?\n  → {EXNESS_LINK}\n\n"
     "▸ Compte existant mais pas via notre lien ?\n"
     "  → Contacte @lementorfx pour régulariser\n\n"
     "━━━━━━━━━━━━━━━━━━━━━\n"
-    "Une fois réglé, tape /start pour recommencer."
+    "Tape /start pour recommencer."
 ),
-"cancel": "❌ Inscription annulée.\nTape /start quand tu veux recommencer.",
-"deja":   "✅ Tu es déjà inscrit et validé !\nDes questions → @lementorfx",
+
+"paiement_instructions": (
+    "💳 *PAIEMENT — ACCÈS VIP ROBOTS*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "🟡 *Binance Pay*\n"
+    "   ID : `556807688`\n\n"
+    "🔵 *Binance USDT TRC20*\n"
+    "   `TEWKJtPsn4RsrEt2kiLNCDMUVKLGQ6RLJb`\n\n"
+    "🔵 *PayPal*\n"
+    "   `capor51@gmail.com`\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "💰 *Montant exact :* `200 USD`\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📸 *Étape suivante :*\n"
+    "Une fois le paiement effectué,\n"
+    "*envoie ici une capture d'écran*\n"
+    "de ta confirmation de paiement.\n\n"
+    "✅ @lementorfx vérifie et t'envoie l'accès.\n\n"
+    "_⚠️ Envoie uniquement une vraie capture._\n"
+    "_Tout faux paiement sera rejeté._"
+),
+
+"capture_recue": (
+    "📸 *Capture reçue !*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Ta preuve de paiement a été transmise\n"
+    "à *@lementorfx* pour vérification.\n\n"
+    "✅ Si le paiement est confirmé,\n"
+    "tu recevras l'accès au VIP Robots ici.\n\n"
+    "⏱ Délai : *quelques heures maximum*\n\n"
+    "Questions → @lementorfx 💬"
+),
+
+"valide_robot": (
+    "🎉 *PAIEMENT CONFIRMÉ !*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Ton accès VIP Robots est *activé à vie* ✅\n\n"
+    "🤖 *Ton accès VIP Robots MT4/MT5 :*\n\n"
+    f"🔐 *Canal VIP Robots* :\n{CANAL_VIP_ROBOTS}\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📌 *Dans ce canal :*\n"
+    "• Téléchargement illimité de tous les robots\n"
+    "• Martingale, Hedging, One Shot, Grid, Scalping\n"
+    "• Mises à jour gratuites à vie\n"
+    "• Support technique\n\n"
+    "✅ Rejoins et active les notifications 🔔\n\n"
+    "Merci pour ta confiance ! 🚀 @lementorfx"
+),
+
+"paiement_rejete": (
+    "❌ *Paiement non confirmé*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "La capture envoyée n'a pas pu être\n"
+    "vérifiée par @lementorfx.\n\n"
+    "💡 *Que faire ?*\n"
+    "▸ Vérifie que tu as envoyé le bon montant *(200 USD)*\n"
+    "▸ Vérifie les coordonnées de paiement\n"
+    "▸ Contacte @lementorfx directement\n\n"
+    "Tape /robots pour réessayer."
+),
+
+"cancel": "❌ Annulé. Tape /start pour recommencer.",
+"deja":   "✅ Tu es déjà inscrit !\nDes questions → @lementorfx",
 },
 
 "en": {
+
 "accueil": (
-    "👋 *Hello and welcome!*\n\n"
-    "I'm the official assistant of *LeMentorFx* 🤖\n\n"
+    "👋 *Welcome to LeMentorFx!*\n\n"
+    "I'm your official assistant 🤖\n"
+    "Managed by *@lementorfx* — Exness IB Partner\n\n"
     "━━━━━━━━━━━━━━━━━━━━━\n"
-    "🏆 *VIP Access — What you'll receive:*\n\n"
-    "📡 XAU/USD Signals *(PHANTOM TRAP)*\n"
-    "🧠 Advanced Forex analysis\n"
-    "🎯 Manipulation strategies\n"
-    "📊 Supply & Demand Intraday\n"
-    "💎 Exclusive premium content\n"
-    "🔥 Professional traders groups\n"
+    "🎓 *What we offer:*\n\n"
+    "📚 *Option 1 — FREE*\n"
+    "Basic trading education\n"
+    "How to read and apply a signal\n"
+    "Access to VIP XAU/USD signals channel\n\n"
+    "🤖 *Option 2 — 200 USD lifetime*\n"
+    "Unlimited VIP MT4/MT5 Robots access\n"
+    "Free download of all robots\n"
+    "Lifetime updates included\n"
     "━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "✅ *One condition:* be an Exness referral of @lementorfx\n\n"
-    "⏱ Registration in *2 minutes*\n\n"
-    "👇 *Press Start to begin*"
+    "👇 *Choose your option below*"
 ),
+
+"menu": "🔽 *What would you like to do?*\n\n📢 You can first *join our free public groups*\nto see what happens in the VIP 👇",
+
+"publics": (
+    "👀 *Before registering, join our public groups:*\n\n"
+    f"📡 Signals & Education *(public)*:\n{CANAL_PUB_SIGNAUX}\n\n"
+    f"🤖 Trading Robots *(public)*:\n{CANAL_PUB_ROBOTS}\n\n"
+    "See what's happening there, then decide.\nReady? Come back and choose your option!"
+),
+
+"choix_signaux": (
+    "📚 *VIP SIGNALS & EDUCATION ACCESS*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "*100% FREE* ✅\n\n"
+    "What you get:\n"
+    "• 🎓 Basic trading education\n"
+    "• 📈 How to apply a signal correctly\n"
+    "• 📡 Real-time XAU/USD signals *(PHANTOM TRAP)*\n"
+    "• 🔗 Google Drive access with full training\n"
+    "• 🌍 Available in French and English\n\n"
+    "*Condition:* be an Exness referral of @lementorfx\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Click *Start Registration* to continue 👇"
+),
+
+"choix_robots": (
+    "🤖 *VIP MT4/MT5 ROBOTS ACCESS*\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "*200 USD — Lifetime Access* 💎\n\n"
+    "What you get:\n"
+    "• 🤖 Unlimited download of all robots\n"
+    "• 📊 Martingale, Hedging, One Shot, Grid, Scalping\n"
+    "• 🔄 Free lifetime updates\n"
+    "• 📱 Compatible MT4 & MT5\n"
+    "• 💬 Technical support included\n\n"
+    "*Payment methods:*\n"
+    "Binance Pay • Binance USDT TRC20 • PayPal\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Click *View Payment Details* to continue 👇"
+),
+
 "nom":   "━━━━━━━━━━━━━━━━━━━━━\n👤 *STEP 1 / 5 — Identity*\n━━━━━━━━━━━━━━━━━━━━━\n\nWhat is your *full name*?\n\n_Ex: John Smith_",
 "pays":  "━━━━━━━━━━━━━━━━━━━━━\n🌍 *STEP 2 / 5 — Country*\n━━━━━━━━━━━━━━━━━━━━━\n\nWhich country are you in?\n\n_Ex: Nigeria, UK, USA..._",
-"email": "━━━━━━━━━━━━━━━━━━━━━\n📧 *STEP 3 / 5 — Exness Email*\n━━━━━━━━━━━━━━━━━━━━━\n\nEnter the email used for your Exness account.\n\n⚠️ This will be verified against @lementorfx's partner dashboard.\n\n_Ex: yourname@gmail.com_",
+"email": "━━━━━━━━━━━━━━━━━━━━━\n📧 *STEP 3 / 5 — Exness Email*\n━━━━━━━━━━━━━━━━━━━━━\n\nEnter the email of your Exness account.\n\n⚠️ This will be verified to confirm your referral.\n\n_Ex: yourname@gmail.com_",
 "ebad":  "❌ *Invalid email.* Enter a valid address:\n_Ex: yourname@gmail.com_",
 "edup":  "❌ *Email already registered.*\nContact @lementorfx if this is an error.",
-"exq":   "━━━━━━━━━━━━━━━━━━━━━\n🏦 *STEP 4 / 5 — Exness Account*\n━━━━━━━━━━━━━━━━━━━━━\n\nDo you have an Exness account?\n\n💡 VIP access is *100% free*.\nOnly condition: registered via @lementorfx's link.",
-"noex":  f"⚠️ *No Exness account yet?*\n\nIt's *free* and takes 3 minutes!\n\n🔗 *Official referral link:*\n{EXNESS_LINK}\n\n✅ Once registered, come back and type /start",
-"exid":  "━━━━━━━━━━━━━━━━━━━━━\n🔢 *STEP 5 / 5 — Exness ID*\n━━━━━━━━━━━━━━━━━━━━━\n\nEnter your *Exness account ID*\n_(7 to 9 digit number)_\n\n📌 *How to find it:*\n1️⃣ Go to *exness.com* → log in\n2️⃣ Click *Profile* _(top right)_\n3️⃣ ID appears on the dashboard\n\n👇 Enter your ID now:",
-"idbad": "❌ *Invalid ID.* Exness ID = 7 to 9 digits only.\nTry again:",
+"exq":   "━━━━━━━━━━━━━━━━━━━━━\n🏦 *STEP 4 / 5 — Exness Account*\n━━━━━━━━━━━━━━━━━━━━━\n\nDo you have an Exness account?\n\n💡 VIP signals access is *free*.\nCondition: registered via @lementorfx's link.",
+"noex":  f"⚠️ *No Exness account yet?*\n\nIt's free and fast!\n\n🔗 Official link:\n{EXNESS_LINK}\n\n✅ Once registered, come back and type /start",
+"exid":  "━━━━━━━━━━━━━━━━━━━━━\n🔢 *STEP 5 / 5 — Exness ID*\n━━━━━━━━━━━━━━━━━━━━━\n\nEnter your *Exness ID* _(7 to 9 digits)_\n\n📌 *How to find it:*\n1️⃣ exness.com → log in\n2️⃣ Click *Profile* _(top right)_\n3️⃣ ID appears on dashboard\n\n👇 Enter your ID:",
+"idbad": "❌ *Invalid ID.* Exness ID = 7 to 9 digits.\nTry again:",
 "iddup": "❌ *This ID is already used.*\nContact @lementorfx if this is an error.",
-"choix": "━━━━━━━━━━━━━━━━━━━━━\n🏆 *VIP GROUP SELECTION*\n━━━━━━━━━━━━━━━━━━━━━\n\nSelect the groups you want access to.\nYou can choose *one, several, or all*!\n\n✅ = selected | ☐ = not selected\n\n👇 Select then press *Confirm:*",
-"recap": "━━━━━━━━━━━━━━━━━━━━━\n📋 *SUMMARY*\n━━━━━━━━━━━━━━━━━━━━━\n\n👤 Name: *{nom}*\n🌍 Country: *{pays}*\n📧 Email: *{email}*\n🏦 Exness ID: *{exid}*\n📱 Telegram: @{user}\n\n🏆 *Groups requested:*\n{groupes}\n\nIs everything correct?",
-"attente": "⏳ *Request submitted!*\n\n━━━━━━━━━━━━━━━━━━━━━\nYour info has been sent to *@lementorfx*.\n\n📋 *Next steps:*\n\n1️⃣ @lementorfx verifies your Exness ID\n   in his partner dashboard\n\n2️⃣ If you are his referral ✅\n   → You receive VIP links here\n\n3️⃣ If not ❌\n   → You receive an explanatory message\n\n━━━━━━━━━━━━━━━━━━━━━\n⏱ *Delay: a few hours maximum*\n\nQuestions → @lementorfx 💬",
-"valide": "🎉 *VIP ACCESS GRANTED!*\n\n━━━━━━━━━━━━━━━━━━━━━\nYour Exness referral has been *verified and approved* ✅\n\nWelcome to *LeMentorFx* community! 🔥\n\n🏆 *Your VIP access links:*\n\n{liens}\n━━━━━━━━━━━━━━━━━━━━━\n\n📌 *For each group:*\n• Click the link → Join\n• Enable notifications 🔔\n• Read pinned rules\n\nHappy trading! 🚀\nQuestions → @lementorfx",
-"rejete": f"❌ *VIP Access Not Approved*\n\n━━━━━━━━━━━━━━━━━━━━━\nExness ID *{{exid}}* could not be verified as a referral of @lementorfx.\n\n💡 *Solutions:*\n\n▸ No Exness account?\n  → Create one: {EXNESS_LINK}\n\n▸ Account exists but not via our link?\n  → Contact @lementorfx\n\n━━━━━━━━━━━━━━━━━━━━━\nOnce resolved, type /start again.",
-"cancel": "❌ Registration cancelled.\nType /start whenever you want to restart.",
-"deja":   "✅ You are already registered and validated!\nQuestions → @lementorfx",
+"recap": "━━━━━━━━━━━━━━━━━━━━━\n📋 *SUMMARY*\n━━━━━━━━━━━━━━━━━━━━━\n\n👤 Name: *{nom}*\n🌍 Country: *{pays}*\n📧 Email: *{email}*\n🏦 Exness ID: *{exid}*\n📱 Telegram: @{user}\n\nIs everything correct?",
+
+"attente_signal": (
+    "⏳ *Request submitted!*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Your info has been sent to *@lementorfx*\n"
+    "for Exness referral verification.\n\n"
+    "📋 *Next steps:*\n\n"
+    "1️⃣ @lementorfx verifies your Exness ID\n"
+    "2️⃣ If validated ✅ → you receive the VIP link here\n"
+    "3️⃣ If not ❌ → you receive an explanatory message\n\n"
+    "⏱ Delay: *a few hours maximum*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "⬇️ *While waiting, join our public groups:*\n\n"
+    f"📡 Signals & Education *(public)*:\n{CANAL_PUB_SIGNAUX}\n\n"
+    f"🤖 Trading Robots *(public)*:\n{CANAL_PUB_ROBOTS}\n\n"
+    "Questions → @lementorfx 💬"
+),
+
+"valide_signal": (
+    "🎉 *VIP ACCESS GRANTED!*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Your Exness referral is *verified and validated* ✅\n\n"
+    "Welcome to *LeMentorFx* community! 🔥\n\n"
+    "🔐 *Your VIP Signals & Education access:*\n\n"
+    f"📡 *VIP Channel*:\n{CANAL_VIP_SIGNAUX}\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📌 *In this channel:*\n"
+    "• 🎓 Basic trading training _(Google Drive pinned)_\n"
+    "• 📈 How to read and apply a signal\n"
+    "• 📡 Real-time XAU/USD signals\n\n"
+    "✅ Join and enable notifications 🔔\n\n"
+    "Happy trading! 🚀 @lementorfx"
+),
+
+"rejete": (
+    "❌ *Access Not Approved*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Exness ID *{exid}* was not found\n"
+    "in @lementorfx's referrals.\n\n"
+    "💡 *Solutions:*\n\n"
+    f"▸ No Exness account?\n  → {EXNESS_LINK}\n\n"
+    "▸ Account exists but not via our link?\n"
+    "  → Contact @lementorfx\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Type /start to try again."
+),
+
+"paiement_instructions": (
+    "💳 *PAYMENT — VIP ROBOTS ACCESS*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "🟡 *Binance Pay*\n"
+    "   ID: `556807688`\n\n"
+    "🔵 *Binance USDT TRC20*\n"
+    "   `TEWKJtPsn4RsrEt2kiLNCDMUVKLGQ6RLJb`\n\n"
+    "🔵 *PayPal*\n"
+    "   `capor51@gmail.com`\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "💰 *Exact amount:* `200 USD`\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📸 *Next step:*\n"
+    "Once payment is done,\n"
+    "*send a screenshot* of your payment\n"
+    "confirmation right here in the bot.\n\n"
+    "✅ @lementorfx verifies and sends your access.\n\n"
+    "_⚠️ Only send a real screenshot._\n"
+    "_Fake payments will be rejected._"
+),
+
+"capture_recue": (
+    "📸 *Screenshot received!*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Your payment proof has been sent\n"
+    "to *@lementorfx* for verification.\n\n"
+    "✅ If confirmed, you'll receive\n"
+    "your VIP Robots access here.\n\n"
+    "⏱ Delay: *a few hours maximum*\n\n"
+    "Questions → @lementorfx 💬"
+),
+
+"valide_robot": (
+    "🎉 *PAYMENT CONFIRMED!*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "Your VIP Robots access is *activated for life* ✅\n\n"
+    "🤖 *Your VIP MT4/MT5 Robots access:*\n\n"
+    f"🔐 *VIP Robots Channel*:\n{CANAL_VIP_ROBOTS}\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "📌 *In this channel:*\n"
+    "• Unlimited download of all robots\n"
+    "• Martingale, Hedging, One Shot, Grid, Scalping\n"
+    "• Free lifetime updates\n"
+    "• Technical support\n\n"
+    "✅ Join and enable notifications 🔔\n\n"
+    "Thank you for your trust! 🚀 @lementorfx"
+),
+
+"paiement_rejete": (
+    "❌ *Payment Not Confirmed*\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━\n"
+    "The screenshot sent could not be\n"
+    "verified by @lementorfx.\n\n"
+    "💡 *What to do?*\n"
+    "▸ Check you sent the right amount *(200 USD)*\n"
+    "▸ Check payment details\n"
+    "▸ Contact @lementorfx directly\n\n"
+    "Type /robots to try again."
+),
+
+"cancel": "❌ Cancelled. Type /start to restart.",
+"deja":   "✅ You are already registered!\nQuestions → @lementorfx",
 }}
 
 def g(lang, key, **kw):
@@ -245,42 +475,7 @@ def g(lang, key, **kw):
     return s.format(**kw) if kw else s
 
 # ═══════════════════════════════════════════════════════
-# HELPERS — CLAVIER SÉLECTION GROUPES
-# ═══════════════════════════════════════════════════════
-
-def build_choix_kb(selected: set) -> InlineKeyboardMarkup:
-    rows = []
-    for k, c in CANAUX.items():
-        check = "✅" if k in selected else "☐"
-        rows.append([InlineKeyboardButton(
-            f"{check} {c['emoji']} {c['nom']}",
-            callback_data=f"CH_{k}"
-        )])
-    rows.append([
-        InlineKeyboardButton("🔷 Tous / All",     callback_data="CH_ALL"),
-        InlineKeyboardButton("🔲 Aucun / None",   callback_data="CH_NONE"),
-    ])
-    rows.append([InlineKeyboardButton("✅ Confirmer / Confirm →", callback_data="CH_OK")])
-    return InlineKeyboardMarkup(rows)
-
-def format_groupes_texte(selected: set, lang: str) -> str:
-    if not selected:
-        return "  _(aucun sélectionné)_" if lang=="fr" else "  _(none selected)_"
-    lines = []
-    for k in sorted(selected):
-        c = CANAUX[k]
-        lines.append(f"  {c['emoji']} {c['nom']}")
-    return "\n".join(lines)
-
-def format_liens_valide(selected: set) -> str:
-    lines = []
-    for k in sorted(selected):
-        c = CANAUX[k]
-        lines.append(f"{c['emoji']} *{c['nom']}*\n🔗 {c['lien']}")
-    return "\n\n".join(lines)
-
-# ═══════════════════════════════════════════════════════
-# CONVERSATION
+# CONVERSATION PRINCIPALE
 # ═══════════════════════════════════════════════════════
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -292,7 +487,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     ctx.user_data.clear()
     ctx.user_data["u"] = update.effective_user.username or str(uid)
-    ctx.user_data["sel"] = set()
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("🇫🇷 Français", callback_data="L_fr"),
         InlineKeyboardButton("🇬🇧 English",  callback_data="L_en"),
@@ -304,19 +498,83 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cb_lang(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    lang = "fr" if q.data=="L_fr" else "en"
+    lang = "fr" if q.data == "L_fr" else "en"
     ctx.user_data["l"] = lang
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🚀 Commencer / Start →", callback_data="GO")
-    ]])
-    await q.edit_message_text(g(lang,"accueil"), parse_mode="Markdown", reply_markup=kb)
-    return S_NOM
 
-async def cb_go(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    btn_fr = "Voir les groupes publics 👀" if lang=="fr" else "View public groups 👀"
+    btn_s  = "📚 VIP Signaux & Éducation — GRATUIT" if lang=="fr" else "📚 VIP Signals & Education — FREE"
+    btn_r  = "🤖 VIP Robots MT4/MT5 — 200 USD" if lang=="fr" else "🤖 VIP Robots MT4/MT5 — 200 USD"
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"👀 {btn_fr}", callback_data="M_publics")],
+        [InlineKeyboardButton(btn_s, callback_data="M_signaux")],
+        [InlineKeyboardButton(btn_r, callback_data="M_robots")],
+    ])
+    await q.edit_message_text(g(lang,"accueil"), parse_mode="Markdown", reply_markup=kb)
+    return S_MENU
+
+async def cb_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     lang = ctx.user_data.get("l","fr")
-    await q.edit_message_text(g(lang,"nom"), parse_mode="Markdown")
-    return S_NOM
+    action = q.data
+
+    if action == "M_publics":
+        btn_back = "⬅️ Retour / Back" 
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(btn_back, callback_data="M_back")]])
+        await q.edit_message_text(g(lang,"publics"), parse_mode="Markdown",
+                                  reply_markup=kb, disable_web_page_preview=True)
+        return S_MENU
+
+    elif action == "M_back":
+        btn_s = "📚 VIP Signaux & Éducation — GRATUIT" if lang=="fr" else "📚 VIP Signals & Education — FREE"
+        btn_r = "🤖 VIP Robots MT4/MT5 — 200 USD"
+        btn_p = "Voir les groupes publics 👀"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"👀 {btn_p}", callback_data="M_publics")],
+            [InlineKeyboardButton(btn_s, callback_data="M_signaux")],
+            [InlineKeyboardButton(btn_r, callback_data="M_robots")],
+        ])
+        await q.edit_message_text(g(lang,"accueil"), parse_mode="Markdown", reply_markup=kb)
+        return S_MENU
+
+    elif action == "M_signaux":
+        ctx.user_data["offre"] = "signaux"
+        btn = "🚀 Commencer l'inscription →" if lang=="fr" else "🚀 Start Registration →"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(btn, callback_data="GO")],
+            [InlineKeyboardButton("⬅️ Retour / Back", callback_data="M_back")],
+        ])
+        await q.edit_message_text(g(lang,"choix_signaux"), parse_mode="Markdown", reply_markup=kb)
+        return S_MENU
+
+    elif action == "M_robots":
+        ctx.user_data["offre"] = "robots"
+        btn = "💳 Voir les détails de paiement →" if lang=="fr" else "💳 View Payment Details →"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(btn, callback_data="GO_ROBOT")],
+            [InlineKeyboardButton("⬅️ Retour / Back", callback_data="M_back")],
+        ])
+        await q.edit_message_text(g(lang,"choix_robots"), parse_mode="Markdown", reply_markup=kb)
+        return S_MENU
+
+    elif action == "GO":
+        await q.edit_message_text(g(lang,"nom"), parse_mode="Markdown")
+        return S_NOM
+
+    elif action == "GO_ROBOT":
+        uid  = update.effective_user.id
+        user = ctx.user_data.get("u","—")
+        # Sauvegarde infos basiques pour retrouver qui envoie la capture
+        save_pending_payment(uid, {
+            "username": user, "lang": lang,
+            "user_id": uid, "offre": "robots"
+        })
+        await q.edit_message_text(g(lang,"paiement_instructions"), parse_mode="Markdown")
+        return S_ATTENTE_PAIEMENT
+
+    return S_MENU
+
+# ── INSCRIPTION SIGNAUX ──────────────────────────────────
 
 async def h_nom(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lang = ctx.user_data.get("l","fr")
@@ -364,61 +622,21 @@ async def h_exid(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if eid_used(v):
         await update.message.reply_text(g(lang,"iddup"), parse_mode="Markdown"); return ConversationHandler.END
     ctx.user_data["exid"] = v
-    ctx.user_data["sel"] = set()
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Confirmer / Confirm", callback_data="C_ok"),
+        InlineKeyboardButton("✏️ Corriger / Edit",     callback_data="C_edit"),
+    ]])
     await update.message.reply_text(
-        g(lang,"choix"), parse_mode="Markdown",
-        reply_markup=build_choix_kb(set()))
-    return S_CHOIX
-
-async def cb_choix(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    lang = ctx.user_data.get("l","fr")
-    sel  = ctx.user_data.get("sel", set())
-    code = q.data  # CH_1 .. CH_6 | CH_ALL | CH_NONE | CH_OK
-
-    if code == "CH_ALL":
-        sel = set(CANAUX.keys())
-    elif code == "CH_NONE":
-        sel = set()
-    elif code == "CH_OK":
-        if not sel:
-            await q.answer("⚠️ Sélectionne au moins un groupe !", show_alert=True); return S_CHOIX
-        ctx.user_data["sel"] = sel
-        # Passer au récapitulatif
-        nom   = ctx.user_data.get("nom","—")
-        pays  = ctx.user_data.get("pays","—")
-        email = ctx.user_data.get("email","—")
-        exid  = ctx.user_data.get("exid","—")
-        user  = ctx.user_data.get("u","—")
-        groupes_txt = format_groupes_texte(sel, lang)
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Confirmer / Confirm", callback_data="C_ok"),
-            InlineKeyboardButton("✏️ Modifier / Edit",     callback_data="C_edit"),
-        ]])
-        await q.edit_message_text(
-            g(lang,"recap", nom=nom, pays=pays, email=email, exid=exid, user=user, groupes=groupes_txt),
-            parse_mode="Markdown", reply_markup=kb)
-        return S_CONFIRM
-    else:
-        k = code.replace("CH_","")
-        if k in sel: sel.discard(k)
-        else:        sel.add(k)
-
-    ctx.user_data["sel"] = sel
-    try:
-        await q.edit_message_reply_markup(reply_markup=build_choix_kb(sel))
-    except: pass
-    return S_CHOIX
+        g(lang,"recap", nom=ctx.user_data.get("nom","—"), pays=ctx.user_data.get("pays","—"),
+          email=ctx.user_data.get("email","—"), exid=v, user=ctx.user_data.get("u","—")),
+        parse_mode="Markdown", reply_markup=kb)
+    return S_CONFIRM
 
 async def cb_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     lang = ctx.user_data.get("l","fr")
-
     if q.data == "C_edit":
-        ctx.user_data["sel"] = ctx.user_data.get("sel", set())
-        await q.edit_message_text(g(lang,"choix"), parse_mode="Markdown",
-                                  reply_markup=build_choix_kb(ctx.user_data["sel"]))
-        return S_CHOIX
+        await q.edit_message_text(g(lang,"exid"), parse_mode="Markdown"); return S_EXID
 
     uid   = update.effective_user.id
     nom   = ctx.user_data.get("nom","—")
@@ -426,35 +644,24 @@ async def cb_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     email = ctx.user_data.get("email","—")
     exid  = ctx.user_data.get("exid","—")
     user  = ctx.user_data.get("u","—")
-    sel   = ctx.user_data.get("sel", set())
-    groupes_selectionnes = [CANAUX[k]["nom"] for k in sorted(sel)]
 
-    save_pending(uid, {
-        "nom":nom,"pays":pays,"email":email,"exness_id":exid,
-        "username":user,"lang":lang,"user_id":uid,
-        "groupes": groupes_selectionnes
-    })
+    save_pending(uid, {"nom":nom,"pays":pays,"email":email,"exness_id":exid,
+                       "username":user,"lang":lang,"user_id":uid,"offre":"signaux"})
 
-    await q.edit_message_text(g(lang,"attente"), parse_mode="Markdown")
+    await q.edit_message_text(g(lang,"attente_signal"), parse_mode="Markdown",
+                              disable_web_page_preview=True)
 
-    # ── Notification admin avec boutons ──
-    groupes_txt = "\n".join([f"  • {n}" for n in groupes_selectionnes])
     kb_admin = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ VALIDER L'ACCÈS VIP", callback_data=f"A_ok_{uid}"),
-        InlineKeyboardButton("❌ REJETER",              callback_data=f"A_no_{uid}"),
+        InlineKeyboardButton("✅ VALIDER ACCÈS VIP",  callback_data=f"A_ok_{uid}"),
+        InlineKeyboardButton("❌ REJETER",             callback_data=f"A_no_{uid}"),
     ]])
     notif = (
-        f"🆕 *NOUVELLE DEMANDE VIP*\n\n"
+        f"🆕 *NOUVELLE DEMANDE VIP SIGNAUX*\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 Nom : *{nom}*\n"
-        f"🌍 Pays : *{pays}*\n"
-        f"📧 Email : `{email}`\n"
-        f"🏦 ID Exness : `{exid}`\n"
-        f"📱 Telegram : @{user}\n"
-        f"🆔 User ID : `{uid}`\n"
+        f"👤 *{nom}*\n🌍 {pays}\n📧 `{email}`\n"
+        f"🏦 ID Exness : `{exid}`\n📱 @{user}\n🆔 `{uid}`\n"
         f"📅 {datetime.now().strftime('%d/%m/%Y à %H:%M')}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🏆 *Groupes demandés :*\n{groupes_txt}\n\n"
         f"📌 Vérifie sur ton espace Exness Partner\n"
         f"que cet email/ID est bien ton filleul.\n\n"
         f"👇 Puis clique :"
@@ -462,9 +669,53 @@ async def cb_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         await ctx.bot.send_message(chat_id=ADMIN_ID, text=notif,
                                    parse_mode="Markdown", reply_markup=kb_admin)
-        log.info(f"Notif admin envoyée — {nom} ({uid})")
     except Exception as e:
-        log.error(f"ERREUR notif admin: {e}")
+        log.error(f"Notif admin: {e}")
+    return ConversationHandler.END
+
+# ── PAIEMENT ROBOTS ──────────────────────────────────────
+
+async def h_capture_paiement(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Reçoit la capture d'écran de paiement"""
+    lang = ctx.user_data.get("l","fr")
+    uid  = update.effective_user.id
+    user = ctx.user_data.get("u","—")
+
+    await update.message.reply_text(g(lang,"capture_recue"), parse_mode="Markdown")
+
+    # Transférer la capture à l'admin avec boutons
+    kb_admin = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ CONFIRMER PAIEMENT",  callback_data=f"P_ok_{uid}"),
+        InlineKeyboardButton("❌ REJETER PAIEMENT",    callback_data=f"P_no_{uid}"),
+    ]])
+    try:
+        await ctx.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"💳 *PREUVE DE PAIEMENT REÇUE*\n\n"
+                f"📱 @{user} | 🆔 `{uid}`\n"
+                f"📅 {datetime.now().strftime('%d/%m/%Y à %H:%M')}\n"
+                f"💰 Montant attendu : *200 USD — VIP Robots*\n\n"
+                f"📸 Capture ci-dessous ↓\n\n"
+                f"👇 Confirme ou rejette :"
+            ),
+            parse_mode="Markdown"
+        )
+        # Transférer la photo/document
+        if update.message.photo:
+            await ctx.bot.send_photo(chat_id=ADMIN_ID,
+                                     photo=update.message.photo[-1].file_id,
+                                     reply_markup=kb_admin)
+        elif update.message.document:
+            await ctx.bot.send_document(chat_id=ADMIN_ID,
+                                        document=update.message.document.file_id,
+                                        reply_markup=kb_admin)
+        else:
+            await ctx.bot.send_message(chat_id=ADMIN_ID,
+                                       text="⚠️ Pas d'image reçue.",
+                                       reply_markup=kb_admin)
+    except Exception as e:
+        log.error(f"Transfert capture admin: {e}")
 
     return ConversationHandler.END
 
@@ -472,75 +723,91 @@ async def cb_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ADMIN — VALIDER / REJETER
 # ═══════════════════════════════════════════════════════
 
-async def cb_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cb_admin_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if update.effective_user.id != ADMIN_ID:
         await q.answer("⛔ Non autorisé.", show_alert=True); return
     await q.answer()
-
-    parts  = q.data.split("_")   # A_ok_UID ou A_no_UID
-    action = parts[1]
-    uid    = int(parts[2])
+    parts = q.data.split("_"); action = parts[1]; uid = int(parts[2])
 
     if action == "ok":
-        d = approve(uid)
-        if not d:
-            await q.edit_message_text("⚠️ Introuvable. Déjà traité ?"); return
+        d = approve_signal(uid)
+        if not d: await q.edit_message_text("⚠️ Introuvable. Déjà traité ?"); return
         lang = d.get("lang","fr")
-        sel  = set()
-        # Retrouver les clés des groupes depuis les noms
-        noms_sel = d.get("groupes",[])
-        for k, c in CANAUX.items():
-            if c["nom"] in noms_sel: sel.add(k)
-        if not sel: sel = set(CANAUX.keys())  # fallback : tous
-        liens_txt = format_liens_valide(sel)
         try:
-            await ctx.bot.send_message(
-                chat_id=uid,
-                text=g(lang,"valide", liens=liens_txt),
-                parse_mode="Markdown"
-            )
+            await ctx.bot.send_message(chat_id=uid, text=g(lang,"valide_signal"),
+                                       parse_mode="Markdown", disable_web_page_preview=True)
             await q.edit_message_text(
-                f"✅ *VIP validé et liens envoyés !*\n\n"
-                f"👤 {d.get('nom')} (@{d.get('username')})\n"
-                f"🏦 ID: {d.get('exness_id')}\n"
-                f"🏆 Groupes: {', '.join(d.get('groupes',[]))}",
+                f"✅ *Accès VIP accordé !*\n\n👤 {d.get('nom')} (@{d.get('username')})\n"
+                f"🏦 {d.get('exness_id')}\nLien VIP Signaux envoyé ✅",
                 parse_mode="Markdown")
-        except Exception as e:
-            await q.edit_message_text(f"⚠️ Validé mais erreur envoi : {e}")
+        except Exception as e: await q.edit_message_text(f"⚠️ Erreur envoi : {e}")
 
     elif action == "no":
-        d = reject(uid)
-        if not d:
-            await q.edit_message_text("⚠️ Introuvable. Déjà traité ?"); return
+        d = reject_member(uid)
+        if not d: await q.edit_message_text("⚠️ Introuvable. Déjà traité ?"); return
         lang = d.get("lang","fr")
         try:
-            await ctx.bot.send_message(
-                chat_id=uid,
-                text=g(lang,"rejete", exid=d.get("exness_id","?")),
-                parse_mode="Markdown")
+            await ctx.bot.send_message(chat_id=uid,
+                                       text=g(lang,"rejete", exid=d.get("exness_id","?")),
+                                       parse_mode="Markdown", disable_web_page_preview=True)
             await q.edit_message_text(
-                f"❌ *Rejeté*\n\n"
-                f"👤 {d.get('nom')} (@{d.get('username')})\n"
-                f"🏦 ID: {d.get('exness_id')}\n"
-                f"Le client a été informé.",
+                f"❌ *Rejeté*\n\n👤 {d.get('nom')} (@{d.get('username')})\nClient informé.",
                 parse_mode="Markdown")
-        except Exception as e:
-            await q.edit_message_text(f"⚠️ Rejeté mais erreur envoi : {e}")
+        except Exception as e: await q.edit_message_text(f"⚠️ Erreur envoi : {e}")
+
+async def cb_admin_paiement(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if update.effective_user.id != ADMIN_ID:
+        await q.answer("⛔ Non autorisé.", show_alert=True); return
+    await q.answer()
+    parts = q.data.split("_"); action = parts[1]; uid = int(parts[2])
+
+    if action == "ok":
+        d = approve_robot(uid)
+        lang = d.get("lang","fr") if d else "fr"
+        try:
+            await ctx.bot.send_message(chat_id=uid, text=g(lang,"valide_robot"),
+                                       parse_mode="Markdown", disable_web_page_preview=True)
+            await q.edit_message_text(
+                f"✅ *Paiement confirmé — Accès VIP Robots accordé !*\n🆔 {uid}", parse_mode="Markdown")
+        except Exception as e: await q.edit_message_text(f"⚠️ Erreur : {e}")
+
+    elif action == "no":
+        d = reject_payment(uid)
+        lang = d.get("lang","fr") if d else "fr"
+        try:
+            await ctx.bot.send_message(chat_id=uid, text=g(lang,"paiement_rejete"),
+                                       parse_mode="Markdown")
+            await q.edit_message_text(f"❌ *Paiement rejeté*\n🆔 {uid}", parse_mode="Markdown")
+        except Exception as e: await q.edit_message_text(f"⚠️ Erreur : {e}")
 
 # ═══════════════════════════════════════════════════════
 # COMMANDES ADMIN
 # ═══════════════════════════════════════════════════════
 
+async def cmd_robots(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Commande pour accéder directement à l'option robots"""
+    uid = update.effective_user.id
+    lang = ctx.user_data.get("l","fr")
+    ctx.user_data["offre"] = "robots"
+    ctx.user_data["u"] = update.effective_user.username or str(uid)
+    save_pending_payment(uid, {"username": ctx.user_data["u"], "lang": lang,
+                               "user_id": uid, "offre": "robots"})
+    await update.message.reply_text(g(lang,"paiement_instructions"), parse_mode="Markdown")
+    return S_ATTENTE_PAIEMENT
+
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     db = load_db()
     await update.message.reply_text(
-        f"📊 *Stats LeMentorFx VIP Bot*\n\n"
-        f"✅ Membres VIP validés : *{len(db.get('valides',{}))}*\n"
-        f"⏳ En attente : *{len(db.get('attente',{}))}*\n"
+        f"📊 *Stats LeMentorFx Bot*\n\n"
+        f"✅ VIP Signaux validés : *{len([x for x in db.get('valides',{}).values() if x.get('statut')=='validé_signaux'])}*\n"
+        f"🤖 VIP Robots validés : *{len([x for x in db.get('valides',{}).values() if x.get('statut')=='validé_robots'])}*\n"
+        f"⏳ En attente signaux : *{len(db.get('attente',{}))}*\n"
+        f"💳 En attente paiement : *{len(db.get('attente_paiement',{}))}*\n"
         f"❌ Rejetés : *{len(db.get('rejetes',{}))}*\n"
-        f"🏦 IDs Exness : *{len(db.get('exness_ids',[]))}*",
+        f"🏦 IDs Exness enregistrés : *{len(db.get('exness_ids',[]))}*",
         parse_mode="Markdown")
 
 async def cmd_attente(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -548,26 +815,16 @@ async def cmd_attente(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     db = load_db()
     items = list(db.get("attente",{}).values())
     if not items: await update.message.reply_text("✅ Aucune demande en attente."); return
-    lines = []
-    for x in items:
-        g_txt = ", ".join(x.get("groupes",[]))
-        lines.append(
-            f"• *{x.get('nom','?')}* | {x.get('pays','?')}\n"
-            f"  📧 {x.get('email','?')}\n"
-            f"  🏦 {x.get('exness_id','?')} | @{x.get('username','?')}\n"
-            f"  🏆 {g_txt}"
-        )
-    await update.message.reply_text(
-        f"⏳ *{len(items)} demande(s) en attente :*\n\n" + "\n\n".join(lines),
-        parse_mode="Markdown")
+    lines = [f"• *{x.get('nom','?')}* | {x.get('pays','?')} | `{x.get('email','?')}` | ID:{x.get('exness_id','?')} | @{x.get('username','?')}" for x in items]
+    await update.message.reply_text(f"⏳ *{len(items)} demande(s) :*\n\n"+"\n".join(lines), parse_mode="Markdown")
 
 async def cmd_liste(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     db = load_db()
     items = list(db.get("valides",{}).values())[-15:]
-    if not items: await update.message.reply_text("Aucun membre VIP encore."); return
-    lines = [f"• *{x.get('nom','?')}* | {x.get('pays','?')} | {x.get('exness_id','?')}" for x in items]
-    await update.message.reply_text("📋 *Membres VIP :*\n\n"+"\n".join(lines), parse_mode="Markdown")
+    if not items: await update.message.reply_text("Aucun membre encore."); return
+    lines = [f"• *{x.get('nom','?')}* | {x.get('pays','?')} | {x.get('exness_id','?')} | _{x.get('statut','?')}_" for x in items]
+    await update.message.reply_text("📋 *Membres :*\n\n"+"\n".join(lines), parse_mode="Markdown")
 
 async def cmd_bloquer(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -584,31 +841,27 @@ async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def msg_other(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🚀 S'inscrire / Register", callback_data="RESTART")
-    ]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 S'inscrire / Register", callback_data="RESTART")]])
     await update.message.reply_text(
-        "👋 Tape /start ou appuie sur le bouton pour t'inscrire.\n"
-        "Type /start or press the button to register.",
+        "👋 Tape /start ou appuie sur le bouton ci-dessous.\nType /start or press the button below.",
         reply_markup=kb)
 
 async def cb_restart(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     ctx.user_data.clear()
     ctx.user_data["u"] = update.effective_user.username or str(update.effective_user.id)
-    ctx.user_data["sel"] = set()
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("🇫🇷 Français", callback_data="L_fr"),
         InlineKeyboardButton("🇬🇧 English",  callback_data="L_en"),
     ]])
-    await q.edit_message_text(
-        "🌍 *Choisis ta langue / Choose your language:*",
-        parse_mode="Markdown", reply_markup=kb)
+    await q.edit_message_text("🌍 *Choisis ta langue / Choose your language:*",
+                              parse_mode="Markdown", reply_markup=kb)
     return S_LANG
 
 async def post_init(app):
     await app.bot.set_my_commands([
-        BotCommand("start",   "🚀 Démarrer l'inscription VIP"),
+        BotCommand("start",   "🚀 Démarrer"),
+        BotCommand("robots",  "🤖 Accès VIP Robots — 200 USD"),
         BotCommand("annuler", "❌ Annuler"),
     ])
 
@@ -621,38 +874,35 @@ def main():
 
     conv = ConversationHandler(
         entry_points=[
-            CommandHandler("start",  cmd_start),
+            CommandHandler("start",   cmd_start),
+            CommandHandler("robots",  cmd_robots),
             CallbackQueryHandler(cb_restart, pattern="^RESTART$"),
         ],
         states={
-            S_LANG:    [CallbackQueryHandler(cb_lang,    pattern="^L_")],
-            S_NOM:     [
-                CallbackQueryHandler(cb_go, pattern="^GO$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, h_nom),
-            ],
-            S_PAYS:    [MessageHandler(filters.TEXT & ~filters.COMMAND, h_pays)],
-            S_EMAIL:   [MessageHandler(filters.TEXT & ~filters.COMMAND, h_email)],
-            S_EXQ:     [CallbackQueryHandler(cb_exq,    pattern="^EX_")],
-            S_EXID:    [MessageHandler(filters.TEXT & ~filters.COMMAND, h_exid)],
-            S_CHOIX:   [CallbackQueryHandler(cb_choix,  pattern="^CH_")],
-            S_CONFIRM: [CallbackQueryHandler(cb_confirm, pattern="^C_")],
+            S_LANG:             [CallbackQueryHandler(cb_lang,    pattern="^L_")],
+            S_MENU:             [CallbackQueryHandler(cb_menu,    pattern="^(M_|GO)")],
+            S_NOM:              [MessageHandler(filters.TEXT & ~filters.COMMAND, h_nom)],
+            S_PAYS:             [MessageHandler(filters.TEXT & ~filters.COMMAND, h_pays)],
+            S_EMAIL:            [MessageHandler(filters.TEXT & ~filters.COMMAND, h_email)],
+            S_EXQ:              [CallbackQueryHandler(cb_exq,     pattern="^EX_")],
+            S_EXID:             [MessageHandler(filters.TEXT & ~filters.COMMAND, h_exid)],
+            S_CONFIRM:          [CallbackQueryHandler(cb_confirm, pattern="^C_")],
+            S_ATTENTE_PAIEMENT: [MessageHandler(filters.PHOTO | filters.Document.ALL, h_capture_paiement)],
         },
-        fallbacks=[
-            CommandHandler("annuler", cmd_cancel),
-            CommandHandler("cancel",  cmd_cancel),
-        ],
+        fallbacks=[CommandHandler("annuler", cmd_cancel), CommandHandler("cancel", cmd_cancel)],
         allow_reentry=True,
     )
 
     app.add_handler(conv)
-    app.add_handler(CallbackQueryHandler(cb_admin,   pattern="^A_(ok|no)_"))
+    app.add_handler(CallbackQueryHandler(cb_admin_signal,   pattern="^A_(ok|no)_"))
+    app.add_handler(CallbackQueryHandler(cb_admin_paiement, pattern="^P_(ok|no)_"))
     app.add_handler(CommandHandler("stats",   cmd_stats))
     app.add_handler(CommandHandler("liste",   cmd_liste))
     app.add_handler(CommandHandler("attente", cmd_attente))
     app.add_handler(CommandHandler("bloquer", cmd_bloquer))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_other))
 
-    print("✅ LeMentorFx VIP Bot démarré — 6 canaux VIP configurés")
+    print("✅ LeMentorFx Bot V3 démarré — Signaux + Robots + Paiement")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
