@@ -6,7 +6,7 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, ConversationHandler, filters
 )
 
-TOKEN       = "7575039426:AAHnnxr8L7OVdy5TuSsA45rt1l1ID5ubFYc"
+TOKEN       = "7575039426:AAEoTVawvW6uLOZf3b9C5xMcxjfy8GXbBmk"
 ADMIN_ID    = 7412212489
 EXNESS_LINK = "https://one.exnessonelink.com/a/do7n4lz3on"
 DB_FILE     = "membres.json"
